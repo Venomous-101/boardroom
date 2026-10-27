@@ -50,7 +50,7 @@ A full debate costs 26 LLM calls at 1 round, 34 at 2 rounds, and 42 at 3 rounds,
 
 Boardroom uses your own API key (BYOK). Groq is the primary provider and Google Gemini is the fallback. Both offer free tiers.
 
-- Defaults: Groq llama-3.3-70b-versatile, Gemini gemini-2.0-flash. The model field is editable, so you can use any model your key can call.
+- Defaults: Groq openai/gpt-oss-120b, Gemini gemini-2.0-flash. The model field is editable, so you can use any model your key can call.
 - Your key is stored only in your browser (localStorage). It is never sent to any Boardroom server, because there is none.
 - Calls go directly from your browser to the provider you chose: api.groq.com or generativelanguage.googleapis.com. Gemini keys are sent via the x-goog-api-key header, never in a URL.
 - Your dilemma text goes only to that provider, as part of the debate prompts. Past debates are stored only in your browser. Clearing your browser data removes them.
