@@ -2,11 +2,13 @@
 
 ## What it is
 
-Boardroom is a live board of AI advisor simulations for hard business decisions. Bring one decision with options, and eight advisor seats debate it in rounds, vote on a draft resolution, and hand you a scored verdict with conditions, next steps, a cheapest test, kill criteria, and a minority report. Everything runs in your browser. There is no backend, no database, no account, and no tracking.
+Boardroom is a live board of AI advisor simulations for hard business decisions. Bring one decision with options, and eight advisor seats debate it in rounds, vote on a draft resolution, and hand you a scored verdict with conditions, next steps, a cheapest test, kill criteria, and a minority report.
+
+The app is a static page plus one small server function. There is no database, no account, no analytics, and no tracking. Past debates are stored only in your browser.
 
 ## The board
 
-Each seat is an AI simulation inspired by public business frameworks. The seats are not the real people, do not speak for them, and nothing here is affiliated with or endorsed by them. In the app itself, avatars are initials only. The portraits below are illustrations made for this README.
+Each seat is an AI simulation inspired by public business frameworks. The seats are not the real people, do not speak for them, and nothing here is affiliated with or endorsed by them. The room shows each seat's portrait; the portraits below are the same illustrations.
 
 | Portrait | Seat | Role | Focus |
 | --- | --- | --- | --- |
@@ -19,7 +21,7 @@ Each seat is an AI simulation inspired by public business frameworks. The seats 
 | <img src="assets/avatars/saas.png" alt="SaaS" width="80"> | **SaaS** (Dan Martell mould) | People, hiring, and founder time | Buys back the founder's time, hires for the bottleneck, and watches acquisition cost against lifetime value. |
 | <img src="assets/avatars/eos.png" alt="EOS" width="80"> | **EOS** (Gino Wickman mould) | Operations and scaling | Turns vision into traction with quarterly rocks, scorecards, owners, and numbers. |
 
-You can add one custom advisor seat: a name (60 characters max) and the viewpoint it must argue from (500 characters max). It joins the debate like any other seat.
+You can add one custom advisor seat: a name (60 characters max) and the viewpoint it must argue from (500 characters max). It joins the debate like any other seat, shown with its initials.
 
 ## How a debate works
 
@@ -33,7 +35,9 @@ You can add one custom advisor seat: a name (60 characters max) and the viewpoin
 8. Final vote: every advisor votes Endorse, Endorse with amendment, or Dissent, with a final score for the resolution, a final pillar score, and amendment or dissent text.
 9. Read the verdict, copy the transcript, download the Markdown summary, or print to PDF. Past debates reload from your browser history.
 
-A full debate costs 26 LLM calls at 1 round, 34 at 2 rounds, and 42 at 3 rounds, plus one call per step if you add a custom advisor. Calls run sequentially with live progress, which keeps free-tier rate limits in range. Each provider call has a 90 second timeout. If a call fails, the app names the exact advisor and round, offers a retry for that step only without losing the debate, and offers a one-click provider switch when the other key is present. It never switches providers silently.
+The room shows the debate live: a progress stepper (Brief, Openings, Fault lines, Debate, Vote, Verdict), the seats' portraits around the stage with the current speaker lit and everyone else dimmed, the conversation as it happens, and a key-points panel with one line per seat.
+
+A full debate costs 26 LLM calls at 1 round, 34 at 2 rounds, and 42 at 3 rounds, plus one call per step if you add a custom advisor. Calls run sequentially with live progress, which keeps free-tier rate limits in range. Each call has a 90 second timeout on the page side and a 60 second limit in the server function. If a call fails, the app names the exact advisor and round, offers a retry for that step only without losing the debate, and offers a one-click provider switch. It never switches providers silently. If the other provider has no server key, the error says so plainly.
 
 ## How scoring works
 
@@ -48,35 +52,42 @@ A full debate costs 26 LLM calls at 1 round, 34 at 2 rounds, and 42 at 3 rounds,
 
 ## Setup and keys
 
-Boardroom uses your own API key (BYOK). Groq is the primary provider and Google Gemini is the fallback. Both offer free tiers.
+No API key is entered in the page, and no key is stored in the browser. The page calls this deployment's own server function (`api/chat.js`), and that function calls the provider with a key from the server environment.
 
-- Defaults: Groq openai/gpt-oss-120b, Gemini gemini-2.0-flash. The model field is editable, so you can use any model your key can call.
-- Your key is stored only in your browser (localStorage). It is never sent to any Boardroom server, because there is none.
-- Calls go directly from your browser to the provider you chose: api.groq.com or generativelanguage.googleapis.com. Gemini keys are sent via the x-goog-api-key header, never in a URL.
-- Your dilemma text goes only to that provider, as part of the debate prompts. Past debates are stored only in your browser. Clearing your browser data removes them.
+- Providers: Groq is the primary, Google Gemini is the fallback. Both offer free tiers.
+- Defaults: Groq openai/gpt-oss-120b, Gemini gemini-2.0-flash. The model field is editable, so you can use any model the server key can call.
+- Environment variables, set in the hosting dashboard (never in the repo): `GROQ_API_KEY` for Groq, `GEMINI_API_KEY` for Gemini. A provider without its variable returns a clear "not configured" error instead of failing silently. `.env.example` lists the names with blank values.
+- Your dilemma text goes only to the chosen provider, as part of the debate prompts, via your own server function. Past debates are stored only in your browser. Clearing your browser data removes them.
+- The server function is same-origin only: it sends no CORS headers, so other websites cannot call it from a browser. It also caps prompt sizes and rate-limits per address. That rate limit is a tripwire, not authentication: this setup is built for a private single-user deployment. Keep the deployment URL private, and turn on your host's deployment protection if it offers one, so only you can open the app.
 
 ## Run it locally
 
-No build step, no dependencies, no install. Any static file server works:
+The full app, including the server function, runs with the Vercel CLI:
 
 ```bash
 cd boardroom
-python3 -m http.server 8000
+npx vercel dev
 ```
 
-Then open http://localhost:8000 in your browser. You can also open `index.html` directly.
+Then open the local address it prints. A plain static file server (for example `python3 -m http.server 8000`) shows the page, but debates need the server function, so use `vercel dev` for real runs.
 
-## Deploy on Vercel
+## Deploy your own
 
-This is a static site. In Vercel, import the repository, set no build command, and set the output directory to the folder containing `index.html` (the repo root). There is nothing to build, nothing to install, and no environment variables to set.
+This repo is meant to be forked and deployed by its owner, not used as a hosted service. There is no live demo link in this repo on purpose.
+
+1. Fork the repository.
+2. In Vercel, import the fork, set no build command, and set the output directory to the folder containing `index.html` (the repo root). The `api/` folder is picked up automatically as server functions. There is nothing to build and nothing to install.
+3. In the project settings, add the environment variables: `GROQ_API_KEY`, and `GEMINI_API_KEY` if you want the fallback.
+4. Redeploy, then open your deployment and run a debate.
+5. Keep your deployment URL private. Do not publish it in the repo, a post, or a README.
 
 ## Security notes
 
-- No backend, no database, no accounts, no analytics, no tracking, and no cookies set by the app. Nothing you type is stored on any server.
-- No secrets in this repository: no API keys, tokens, or personal data.
+- No database, no accounts, no analytics, no tracking, and no cookies set by the app. Nothing you type is stored on any server.
+- No secrets in this repository: no API keys, tokens, personal data, or deployment URLs.
 - Pasted content is never executed. It is parsed as text only: no eval, no new Function, and all dynamic text is escaped before rendering.
-- The app contacts no external resources. The only hosts it calls are the two provider APIs listed above.
-- Input limits protect your own key from runaway usage: title 200 characters, context 4,000 characters, at most 4 user options, rounds capped at 3.
+- The app loads no external scripts, styles, fonts, or trackers. The only hosts involved are your own deployment and the provider API it calls server-side.
+- Input limits protect the server key from runaway usage: title 200 characters, context 4,000 characters, at most 4 user options, rounds capped at 3, and prompt caps in the server function.
 - See SECURITY.md for the full threat model.
 
 ## Tests

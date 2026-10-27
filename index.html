@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Boardroom: AI Board of Advisors</title>
-<meta name="description" content="Boardroom runs a live debate of AI advisor simulations on your business decision, using your own API key. No server, no accounts, no tracking.">
+<meta name="description" content="Boardroom runs a live debate of AI advisor simulations on your business decision. No keys in the page, no accounts, no tracking.">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -17,30 +17,9 @@
 </header>
 
 <main>
-  <section class="panel" id="key-panel">
-    <h2>Your API keys (bring your own key)</h2>
-    <p>Boardroom has no server, no database, no accounts, and no tracking. Your key is stored only in this browser, in localStorage, and is sent only to the provider you chose. Nothing you type here is stored anywhere else, and your dilemma text goes only to that provider as part of the debate prompts.</p>
-    <div class="key-row">
-      <label>Groq API key
-        <input type="password" id="key-groq" autocomplete="off" placeholder="Your Groq key">
-      </label>
-      <span class="key-help">Free key at console.groq.com</span>
-    </div>
-    <div class="key-row">
-      <label>Google Gemini API key
-        <input type="password" id="key-gemini" autocomplete="off" placeholder="Your Gemini key">
-      </label>
-      <span class="key-help">Free key at aistudio.google.com</span>
-    </div>
-    <div class="btn-row">
-      <button id="save-keys" type="button">Save keys in this browser</button>
-      <button id="clear-keys" type="button" class="secondary">Clear saved keys</button>
-    </div>
-    <p id="key-status" class="muted" aria-live="polite"></p>
-  </section>
-
   <section class="panel" id="setup-form">
     <h2>Start a debate</h2>
+    <p class="muted">No API key is entered here. Calls go through this deployment's own server function, which holds the key server-side. Setup for your own deployment is in the README.</p>
     <label>Decision title
       <input type="text" id="d-title" maxlength="200" placeholder="Example: Should I raise my coaching price to $3,500?">
     </label>
@@ -109,17 +88,31 @@
       <button id="print-btn" type="button">Print / save PDF</button>
     </div>
 
+    <nav id="stepper"></nav>
+
     <h2>The board</h2>
-    <div id="board" class="board-grid"></div>
+    <div id="stage"></div>
 
-    <h2>Transcript</h2>
-    <div id="transcript" class="transcript"></div>
+    <section class="panel">
+      <h2>Brief and fault lines</h2>
+      <div id="cruxes"></div>
+    </section>
 
-    <h2>Scorecard</h2>
-    <div id="scorecard"></div>
+    <div class="room-layout">
+      <div>
+        <h2>Conversation</h2>
+        <div id="transcript" class="transcript"></div>
+      </div>
+      <aside>
+        <h2>Key points</h2>
+        <div id="keypoints"></div>
+      </aside>
+    </div>
 
-    <h2>Verdict</h2>
-    <div id="verdict"></div>
+    <section class="panel">
+      <h2>Verdict</h2>
+      <div id="verdict"></div>
+    </section>
   </section>
 
   <section class="panel" id="history-panel">
