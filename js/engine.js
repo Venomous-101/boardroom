@@ -75,15 +75,19 @@ BR.createDebate = function (input) {
     return { id: letters[i], label: label };
   });
   var advisors = (input.advisors || []).slice();
+  var mode = (input.mode === "quick" || input.mode === "consult") ? input.mode : "full";
+  var rounds = Math.min(Math.max(parseInt(input.rounds, 10) || 2, 1), BR.LIMITS.rounds);
+  if (mode === "quick") { rounds = 1; }
   var now = new Date().toISOString();
   return {
     id: "debate-" + Date.now(),
     createdAt: now,
+    mode: mode,
     title: BR.clampText((input.title || "").trim(), BR.LIMITS.title),
     context: BR.clampText(input.context || "", BR.LIMITS.context),
     options: optionObjs,
     focus: input.focus || "balanced",
-    rounds: Math.min(Math.max(parseInt(input.rounds, 10) || 2, 1), BR.LIMITS.rounds),
+    rounds: rounds,
     provider: input.provider || "groq",
     model: (input.model || "").trim(),
     advisors: advisors,
@@ -96,6 +100,29 @@ BR.createDebate = function (input) {
     transcript: [],
     providerSwitches: [],
     failedStep: null,
+    completed: false
+  };
+};
+
+/* Consult: one seat, one answer, no scoring, no session save. The
+   consult state never enters runDebate; main.js calls the model once
+   with BR.consultUser and renders the prose answer. */
+BR.createConsult = function (input) {
+  return {
+    id: "consult-" + Date.now(),
+    createdAt: new Date().toISOString(),
+    mode: "consult",
+    title: BR.clampText((input.title || "").trim(), BR.LIMITS.title),
+    context: BR.clampText(input.context || "", BR.LIMITS.context),
+    options: (input.options || []).map(function (label, i) {
+      return { id: ["A", "B", "C", "D", "E"][i], label: BR.clampText((label || "").trim(), 120) };
+    }).filter(function (o) { return o.label; }),
+    focus: input.focus || "balanced",
+    provider: input.provider || "groq",
+    model: (input.model || "").trim(),
+    advisor: input.advisor || null,
+    question: BR.clampText((input.title || "").trim(), BR.LIMITS.title),
+    answer: "",
     completed: false
   };
 };
@@ -216,6 +243,7 @@ BR.validateDraft = function (obj) {
     killCriteria: BR.clampText(typeof obj.killCriteria === "string" ? obj.killCriteria : "", 220),
     risks: Array.isArray(obj.risks) ? obj.risks.slice(0, 5).map(function (a) { return BR.clampText(String(a), 220); }) : [],
     tradeoffs: Array.isArray(obj.tradeoffs) ? obj.tradeoffs.slice(0, 5).map(function (a) { return BR.clampText(String(a), 220); }) : [],
+    revisit: (typeof obj.revisit === "string" && obj.revisit.trim()) ? BR.clampText(obj.revisit.trim(), 220) : null,
     waitFor: (typeof obj.waitFor === "string" && obj.waitFor.trim()) ? BR.clampText(obj.waitFor.trim(), 220) : null
   };
 };
@@ -360,7 +388,7 @@ BR.computeVerdict = function (state) {
     return best;
   };
   minority = pickStrongest(dissentList) || pickStrongest(otherwiseList);
-  return {
+  var verdictSoFar = {
     recommendedId: recommendedId,
     recommendedScore: recommendedScore,
     label: label,
@@ -375,6 +403,106 @@ BR.computeVerdict = function (state) {
     preferredOtherwise: otherwiseList,
     minority: minority
   };
+  verdictSoFar.topReasons = BR.topReasons(state, recommendedId, latest);
+  verdictSoFar.pillarFixes = BR.pillarFixes(state, pillarCard);
+  verdictSoFar.amendments = BR.ratifyAmendments(state, label);
+  return verdictSoFar;
+};
+
+/* Why it won: the three strongest arguments for the recommended option,
+   ranked by pillar score, taken from the latest cards. Derived from real
+   cards only, never invented. When a latest card carries no reason, the
+   seat's final line is used, then its rebuttal, so the sheet never
+   renders an empty argument. */
+BR.topReasons = function (state, recommendedId, latest) {
+  var cards = latest || (state.debateRounds.length > 0
+    ? state.debateRounds[state.debateRounds.length - 1].cards
+    : state.opening);
+  var rows = [];
+  state.advisors.forEach(function (a, idx) {
+    var card = cards[a.id];
+    if (card && card.recommendedId === recommendedId) {
+      var f = state.final[a.id];
+      var reason = card.reason || (f && f.line) || card.rebuttal || "";
+      rows.push({ advisorId: a.id, short: a.short, reason: reason, pillarScore: card.pillarScore || 0, order: idx });
+    }
+  });
+  rows.sort(function (x, y) {
+    if (y.pillarScore !== x.pillarScore) { return y.pillarScore - x.pillarScore; }
+    return x.order - y.order;
+  });
+  return rows.slice(0, 3).map(function (r) {
+    return { advisorId: r.advisorId, short: r.short, reason: r.reason, pillarScore: r.pillarScore };
+  });
+};
+
+/* Pillar fixes: every pillar at 4 or below gets a named fix, sourced
+   from that seat's own final line, or its latest reason when no line
+   exists. Empty when every pillar scores above 4. */
+BR.pillarFixes = function (state, pillarCard) {
+  var fixes = [];
+  state.advisors.forEach(function (a) {
+    var score = pillarCard ? pillarCard[a.id] : 0;
+    if (typeof score === "number" && score <= 4) {
+      var f = state.final[a.id];
+      var latest = state.debateRounds.length > 0
+        ? state.debateRounds[state.debateRounds.length - 1].cards[a.id]
+        : state.opening[a.id];
+      fixes.push({
+        advisorId: a.id,
+        short: a.short,
+        dimension: a.dimension,
+        score: score,
+        line: (f && f.line) ? f.line : (latest ? latest.reason : "")
+      });
+    }
+  });
+  return fixes;
+};
+
+/* Ratification: every amendment or dissent text from the final votes,
+   with an adopted flag and a reason. Chair rule, stated in the UI:
+   amendments from endorsing seats are carried when the resolution
+   passes (GO or GO WITH CONDITIONS); dissenting amendments go to the
+   minority report. No argument quality is judged by the engine. */
+BR.ratifyAmendments = function (state, label) {
+  var passed = (label === "GO" || label === "GO WITH CONDITIONS");
+  var list = [];
+  state.advisors.forEach(function (a) {
+    var f = state.final[a.id];
+    if (!f || !f.amendment) { return; }
+    if (f.vote === "Endorse with amendment") {
+      list.push({
+        advisorId: a.id,
+        short: a.short,
+        vote: f.vote,
+        amendment: f.amendment,
+        adopted: passed,
+        reason: passed
+          ? "Carried: the resolution passed with this amendment."
+          : "Not carried: the resolution did not pass as written."
+      });
+    } else if (f.vote === "Dissent") {
+      list.push({
+        advisorId: a.id,
+        short: a.short,
+        vote: f.vote,
+        amendment: f.amendment,
+        adopted: false,
+        reason: "Recorded in the minority report."
+      });
+    } else {
+      list.push({
+        advisorId: a.id,
+        short: a.short,
+        vote: f.vote,
+        amendment: f.amendment,
+        adopted: false,
+        reason: "Noted: endorsed without amendment, text recorded."
+      });
+    }
+  });
+  return list;
 };
 
 BR.dissenters = function (state) {
@@ -410,7 +538,7 @@ BR.preferredOtherwise = function (state, recommendedId) {
         advisorId: a.id,
         short: a.short,
         vote: f.vote,
-        reason: latest ? latest.reason : "",
+        reason: (latest && latest.reason) || (f && f.line) || (latest && latest.rebuttal) || "",
         pillarScore: f.finalPillarScore,
         topId: topId
       });
@@ -448,6 +576,10 @@ BR.directorUser = function (state) {
   state.options.forEach(function (o) { lines.push(o.id + ". " + o.label); });
   lines.push("Advisors at the table:");
   state.advisors.forEach(function (a) { lines.push("- " + a.id + ": " + a.short + " (" + a.pillar + ")"); });
+  lines.push("Weight guidance (one line per seat, from the seat's own brief):");
+  state.advisors.forEach(function (a) {
+    if (a.weightWhen) { lines.push("- " + a.short + ": " + a.weightWhen); }
+  });
   lines.push(BR.FOCUS_LINES[state.focus] || BR.FOCUS_LINES.balanced);
   lines.push("Return ONLY this JSON object, nothing else:");
   lines.push('{"brief": "under 200 words framing the decision, options, and what is at stake",');
@@ -498,6 +630,7 @@ BR.debateUser = function (state, advisor, prevCards, roundNumber) {
   lines.push('{"disagreeWith": "short name of the seat you disagree with most", "rebuttal": "your rebuttal, under 600 chars",');
   lines.push('"concede": "the strongest point against you and what it changes", "cruxAnswers": ["one or two lines per crux"],');
   lines.push('"stance": "Strong yes | Yes | Yes, if | No | Strong no",');
+  lines.push('"reason": "one line, your core argument for your recommended option",');
   lines.push('"optionScores": {' + state.options.map(function (o) { return '"' + o.id + '": 0-10'; }).join(", ") + '},');
   lines.push('"pillarScore": 0-10, "confidence": 1-5, "ruinRisk": "none | possible | likely",');
   lines.push('"moved": "no, or yes, from X to Y, because ...", "conditions": ["up to three concrete checkable conditions for yes"]}');
@@ -512,10 +645,12 @@ BR.draftUser = function (state, optionScores, recommendedId) {
   state.options.forEach(function (o) { lines.push(o.id + ". " + o.label + ": " + optionScores[o.id].score + "/10"); });
   lines.push("Recommended option (computed by the Chair from scores): " + recommendedId + " " + BR.optionLabelOf(state, recommendedId));
   lines.push(BR.FOCUS_LINES[state.focus] || BR.FOCUS_LINES.balanced);
+  lines.push("Today is " + new Date().toISOString().slice(0, 10) + ". Every next-step date must be on or after today.");
   lines.push("Write the draft resolution for that recommendation. Return ONLY this JSON object, nothing else:");
   lines.push('{"conditions": [{"text": "checkable condition", "gating": true if it must clear before any irreversible step, else false}],');
   lines.push('"nextSteps": ["concrete steps with owners or dates"], "cheapestTest": "the smallest test of the riskiest assumption",');
   lines.push('"killCriteria": "the signal that means stop", "risks": ["hidden risks"], "tradeoffs": ["explicit trade-offs"],');
+  lines.push('"revisit": "when to revisit and with what numbers, or null",');
   lines.push('"waitFor": "a prerequisite that is not met yet, or null if none"}');
   return lines.join("\n");
 };
@@ -523,17 +658,41 @@ BR.draftUser = function (state, optionScores, recommendedId) {
 BR.finalUser = function (state, advisor) {
   var lines = [];
   lines.push("Decision: " + state.title);
-  lines.push("Draft resolution: recommend option " + state.verdictDraftId + " " + BR.optionLabelOf(state, state.verdictDraftId) + ".");
   if (state.draft) {
+    lines.push("Draft resolution: recommend option " + state.verdictDraftId + " " + BR.optionLabelOf(state, state.verdictDraftId) + ".");
     lines.push("Conditions:");
     state.draft.conditions.forEach(function (c) { lines.push("- " + c.text + (c.gating ? " (gating)" : "")); });
     lines.push("Next steps: " + state.draft.nextSteps.join("; "));
     lines.push("Cheapest test: " + state.draft.cheapestTest);
+    lines.push("Vote on the draft resolution as written. Return ONLY this JSON object, nothing else:");
+  } else {
+    var latest = state.debateRounds.length > 0
+      ? state.debateRounds[state.debateRounds.length - 1].cards
+      : state.opening;
+    var scores = BR.computeOptionScores(state, latest);
+    var rec = BR.pickRecommended(state, scores);
+    lines.push("No draft resolution stage in this run. The current leader from scores is option " + rec + " " + BR.optionLabelOf(state, rec) + " at " + scores[rec].score + "/10.");
+    lines.push("Vote on that leading option as the decision. Return ONLY this JSON object, nothing else:");
   }
-  lines.push("Vote on the draft resolution as written. Return ONLY this JSON object, nothing else:");
   lines.push('{"vote": "Endorse | Endorse with amendment | Dissent", "finalScore": 0-10 support for the resolution,');
   lines.push('"finalPillarScore": 0-10, "amendment": "what to change, or why you dissent (blank if you endorse)",');
   lines.push('"line": "the one thing from your pillar the founder must not forget"}');
+  return lines.join("\n");
+};
+
+BR.consultSystem = "You are a single advisor seat on a business board, answering one question directly. Plain English, short sentences. Give a recommendation, the reasoning from your pillar, the risks, and what would change your mind. Do not score anything and do not use JSON.";
+
+BR.consultUser = function (state, advisor) {
+  var lines = [];
+  lines.push("Decision: " + state.title);
+  lines.push("Context: " + state.context);
+  if (state.options && state.options.length > 0) {
+    lines.push("Options:");
+    state.options.forEach(function (o) { lines.push(o.id + ". " + o.label); });
+  }
+  lines.push("Your pillar is " + advisor.pillar + ". Your question to own is: " + advisor.question);
+  lines.push(BR.FOCUS_LINES[state.focus] || BR.FOCUS_LINES.balanced);
+  lines.push("Answer as prose, in this order: your recommendation (which option, or none), why from your pillar, the biggest risk, and the one fact or number that would change your mind. Keep it under 400 words.");
   return lines.join("\n");
 };
 
@@ -544,12 +703,14 @@ BR.buildStepList = function (state) {
   state.advisors.forEach(function (a) {
     steps.push({ key: "opening:" + a.id, label: "Opening vote: " + a.short, advisorId: a.id });
   });
-  for (var r = 1; r <= state.rounds; r++) {
-    state.advisors.forEach(function (a) {
-      steps.push({ key: "debate:" + r + ":" + a.id, label: "Debate round " + r + ": " + a.short, advisorId: a.id, round: r });
-    });
+  if ((state.mode || "full") !== "quick") {
+    for (var r = 1; r <= state.rounds; r++) {
+      state.advisors.forEach(function (a) {
+        steps.push({ key: "debate:" + r + ":" + a.id, label: "Debate round " + r + ": " + a.short, advisorId: a.id, round: r });
+      });
+    }
+    steps.push({ key: "draft", label: "Draft resolution" });
   }
-  steps.push({ key: "draft", label: "Draft resolution" });
   state.advisors.forEach(function (a) {
     steps.push({ key: "final:" + a.id, label: "Final vote: " + a.short, advisorId: a.id });
   });
@@ -605,7 +766,7 @@ BR.applyStepResult = function (state, step, parsed) {
     if (!round) { round = { round: step.round, cards: {} }; state.debateRounds[step.round - 1] = round; }
     round.cards[step.advisorId] = db;
     var adv2 = BR.advisorById(state, step.advisorId);
-    state.transcript.push({ kind: "argument", speaker: adv2 ? adv2.short : step.advisorId, title: "Debate round " + step.round, body: db.rebuttal || db.reason });
+    state.transcript.push({ kind: "argument", speaker: adv2 ? adv2.short : step.advisorId, title: "Debate round " + step.round, body: db.rebuttal || db.reason, disagreeWith: db.disagreeWith || "" });
     return { ok: true };
   }
   if (step.key === "draft") {
@@ -688,7 +849,7 @@ BR.buildTranscriptText = function (state) {
   lines.push("BOARDROOM TRANSCRIPT");
   lines.push(state.title);
   lines.push("Created: " + state.createdAt);
-  lines.push("Provider: " + state.provider + ", model: " + state.model + ", rounds: " + state.rounds + ", focus: " + state.focus);
+  lines.push("Provider: " + state.provider + ", model: " + state.model + ", mode: " + (state.mode || "full") + ", rounds: " + state.rounds + ", focus: " + state.focus);
   lines.push("");
   lines.push("Options:");
   state.options.forEach(function (o) { lines.push(o.id + ". " + o.label); });
@@ -704,12 +865,13 @@ BR.buildTranscriptText = function (state) {
 };
 
 BR.buildMarkdown = function (state) {
-  if (!state.verdict || !state.draft) { return ""; }
+  if (!state.verdict) { return ""; }
   var v = state.verdict;
+  var d = state.draft;
   var lines = [];
   lines.push("# Boardroom: " + state.title);
   lines.push("");
-  lines.push(state.createdAt + " | Seats: " + state.advisors.map(function (a) { return a.short; }).join(", ") + " | Rounds: " + state.rounds + " | Focus: " + state.focus);
+  lines.push(state.createdAt + " | Mode: " + (state.mode || "full") + " | Seats: " + state.advisors.map(function (a) { return a.short; }).join(", ") + " | Rounds: " + state.rounds + " | Focus: " + state.focus);
   lines.push("");
   lines.push("## Verdict: " + v.label);
   lines.push("");
@@ -721,36 +883,58 @@ BR.buildMarkdown = function (state) {
     v.overrides.forEach(function (o) { lines.push("Override: " + o); });
   }
   lines.push("");
-  lines.push("## Scorecard");
-  lines.push("");
-  lines.push("| Seat | Weight | Final stance | Pillar score | Their line |");
-  lines.push("|---|---|---|---|---|");
-  state.advisors.forEach(function (a) {
-    var w = state.director.weights[a.id] ? state.director.weights[a.id].weight : 1;
-    var f = state.final[a.id];
-    var latest = state.debateRounds.length > 0
-      ? state.debateRounds[state.debateRounds.length - 1].cards[a.id]
-      : state.opening[a.id];
-    lines.push("| " + a.short + " | " + w + " | " + (latest ? latest.stance : "") + " | " + v.pillarScores[a.id] + " | " + (f ? f.line : "") + " |");
-  });
-  lines.push("");
   lines.push("Math:");
   state.options.forEach(function (o) { lines.push("- " + v.optionScores[o.id].math); });
-  lines.push("");
-  lines.push("## Conditions");
-  lines.push("");
-  state.draft.conditions.forEach(function (c) { lines.push("- " + c.text + (c.gating ? " (must clear before any irreversible step)" : "")); });
-  lines.push("");
-  lines.push("## What to do next");
-  lines.push("");
-  state.draft.nextSteps.forEach(function (s, i) { lines.push((i + 1) + ". " + s); });
-  lines.push("");
-  lines.push("**Cheapest test:** " + state.draft.cheapestTest);
-  lines.push("");
-  lines.push("**Kill criteria:** " + state.draft.killCriteria);
-  if (state.draft.waitFor) {
+  if (v.topReasons && v.topReasons.length > 0) {
     lines.push("");
-    lines.push("**Wait trigger:** " + state.draft.waitFor);
+    lines.push("## Why it won");
+    lines.push("");
+    v.topReasons.forEach(function (r) { lines.push("- " + r.short + " (pillar " + r.pillarScore + "/10): " + r.reason); });
+  }
+  lines.push("");
+  lines.push("## Pillar scorecard");
+  lines.push("");
+  state.advisors.forEach(function (a) {
+    lines.push("- " + a.short + " (" + a.dimension + "): " + v.pillarScores[a.id] + "/10");
+  });
+  if (v.pillarFixes && v.pillarFixes.length > 0) {
+    lines.push("");
+    lines.push("Pillars at 4 or below need a named fix:");
+    v.pillarFixes.forEach(function (f) { lines.push("- Fix for " + f.dimension + " (" + f.score + "/10, " + f.short + "): " + f.line); });
+  }
+  if (v.amendments && v.amendments.length > 0) {
+    lines.push("");
+    lines.push("## Ratification");
+    lines.push("");
+    lines.push("Amendments from endorsing seats are carried when the resolution passes; dissenting amendments go to the minority report.");
+    v.amendments.forEach(function (am) {
+      lines.push("- " + am.short + " (" + am.vote + "): " + am.amendment + " [" + (am.adopted ? "Adopted" : "Not adopted") + "] " + am.reason);
+    });
+  }
+  if (d) {
+    lines.push("");
+    lines.push("## Conditions");
+    lines.push("");
+    d.conditions.forEach(function (c) { lines.push("- " + c.text + (c.gating ? " (must clear before any irreversible step)" : "")); });
+    lines.push("");
+    lines.push("## What to do next");
+    lines.push("");
+    d.nextSteps.forEach(function (s, i) { lines.push((i + 1) + ". " + s); });
+    lines.push("");
+    lines.push("**Cheapest test:** " + d.cheapestTest);
+    lines.push("");
+    lines.push("**Kill criteria:** " + d.killCriteria);
+    if (d.revisit) {
+      lines.push("");
+      lines.push("**Revisit:** " + d.revisit);
+    }
+    if (d.waitFor) {
+      lines.push("");
+      lines.push("**Wait trigger:** " + d.waitFor);
+    }
+  } else {
+    lines.push("");
+    lines.push("Quick mode skips the draft resolution stage, so there are no conditions, next steps, cheapest test, or kill criteria.");
   }
   if (v.minority) {
     lines.push("");
@@ -762,14 +946,14 @@ BR.buildMarkdown = function (state) {
     lines.push("");
     lines.push("## Dissent notes");
     lines.push("");
-    v.dissentList.forEach(function (d) { lines.push("- " + d.short + " (" + d.vote + "): " + d.reason); });
+    v.dissentList.forEach(function (d2) { lines.push("- " + d2.short + " (" + d2.vote + "): " + d2.reason); });
   }
   if (v.preferredOtherwise.length > 0) {
     lines.push("");
     lines.push("## Preferred otherwise");
     lines.push("");
     lines.push("These advisors endorsed the resolution but preferred another option:");
-    v.preferredOtherwise.forEach(function (d) { lines.push("- " + d.short + " preferred option " + d.topId + " (" + d.vote + "): " + d.reason); });
+    v.preferredOtherwise.forEach(function (d3) { lines.push("- " + d3.short + " preferred option " + d3.topId + " (" + d3.vote + "): " + d3.reason); });
   }
   lines.push("");
   lines.push("---");

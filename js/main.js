@@ -1,7 +1,8 @@
 /* Boardroom main wiring.
    The page holds no API key. Calls go through this deployment's own
    server function (/api/chat), which holds the key server-side.
-   Past debates live only in this browser's localStorage. */
+   Past debates live only in this browser's localStorage.
+   Consult answers are never saved to history. */
 
 var BR = (function () {
   if (typeof window !== "undefined") { window.BR = window.BR || {}; return window.BR; }
@@ -35,28 +36,33 @@ BR.saveHistory = function (state) {
 document.addEventListener("DOMContentLoaded", function () {
   var $ = function (id) { return document.getElementById(id); };
   var currentState = null;
+  var currentConsult = null;
   var running = false;
   var speakingId = null;
 
   var els = {
     title: $("d-title"), context: $("d-context"), options: $("d-options"),
-    rounds: $("d-rounds"), focus: $("d-focus"), provider: $("d-provider"), model: $("d-model"),
+    mode: $("d-mode"), rounds: $("d-rounds"), focus: $("d-focus"), provider: $("d-provider"), model: $("d-model"),
     customName: $("d-custom-name"), customView: $("d-custom-view"),
+    consultSeatRow: $("consult-seat-row"), consultSeat: $("d-consult-seat"),
     start: $("start-debate"), newDebate: $("new-debate"),
     status: $("status"), errorBox: $("error-box"), errorText: $("error-text"),
     retryStep: $("retry-step"), switchProvider: $("switch-provider"),
-    stepper: $("stepper"), stage: $("stage"), cruxes: $("cruxes"),
+    stepper: $("stepper"), stage: $("stage"), cruxes: $("cruxes"), draft: $("draft"),
     transcript: $("transcript"), keypoints: $("keypoints"),
     verdict: $("verdict"), history: $("history"),
     downloadMd: $("download-md"), copyTx: $("copy-tx"), printBtn: $("print-btn"),
-    setupForm: $("setup-form"), debateView: $("debate-view")
+    setupForm: $("setup-form"), debateView: $("debate-view"),
+    consultView: $("consult-view"), consultAnswer: $("consult-answer"),
+    consultRetry: $("consult-retry"), consultNew: $("consult-new")
   };
 
   function renderAll() {
     if (!currentState) { return; }
     BR.renderStepper(els.stepper, currentState);
-    BR.renderStage(els.stage, currentState, speakingId);
+    BR.renderStage(els.stage, currentState, speakingId, BR.currentRebuttal(currentState));
     BR.renderCruxes(els.cruxes, currentState);
+    BR.renderDraft(els.draft, currentState);
     BR.renderTranscript(els.transcript, currentState, speakingId);
     BR.renderKeyPoints(els.keypoints, currentState);
     BR.renderVerdict(els.verdict, currentState);
@@ -154,7 +160,9 @@ document.addEventListener("DOMContentLoaded", function () {
         list.forEach(function (s) { if (s.id === id) { found = s; } });
         if (found) {
           currentState = found;
+          currentConsult = null;
           els.setupForm.classList.add("hidden");
+          els.consultView.classList.add("hidden");
           els.debateView.classList.remove("hidden");
           setStatus("Loaded a past debate. Nothing was rerun.");
           renderAll();
@@ -163,9 +171,122 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   }
 
+  function resetToSetup() {
+    if (running) { return; }
+    currentState = null;
+    currentConsult = null;
+    els.debateView.classList.add("hidden");
+    els.consultView.classList.add("hidden");
+    els.setupForm.classList.remove("hidden");
+    hideError();
+    setStatus("Ready for a new debate.");
+  }
+
+  function runConsult() {
+    if (running || !currentConsult) { return; }
+    running = true;
+    hideError();
+    setStatus("Consulting " + currentConsult.advisor.short + ".");
+    BR.renderConsult(els.consultAnswer, currentConsult);
+    var providerId = currentConsult.provider;
+    var model = currentConsult.model || BR.PROVIDERS[providerId].defaultModel;
+    BR.callLLM(providerId, model, BR.consultSystem, BR.consultUser(currentConsult, currentConsult.advisor)).then(function (res) {
+      running = false;
+      if (res.ok && res.text) {
+        currentConsult.answer = res.text;
+        currentConsult.completed = true;
+        setStatus("Consult answer ready. Consult answers are not saved to history.");
+      } else {
+        setStatus("Consult failed: " + (res.error ? res.error.message : "unknown error") + " Retry below.");
+      }
+      BR.renderConsult(els.consultAnswer, currentConsult);
+    });
+  }
+
+  function applyMode() {
+    var mode = els.mode.value;
+    if (mode === "consult") {
+      els.consultSeatRow.classList.remove("hidden");
+      els.rounds.disabled = true;
+    } else {
+      els.consultSeatRow.classList.add("hidden");
+      if (mode === "quick") {
+        els.rounds.value = "1";
+        els.rounds.disabled = true;
+      } else {
+        els.rounds.disabled = false;
+      }
+    }
+  }
+
+  function populateConsultSeats() {
+    BR.PERSONAS.forEach(function (p) {
+      var opt = document.createElement("option");
+      opt.value = p.id;
+      opt.textContent = p.short + " (" + p.pillar + ")";
+      els.consultSeat.appendChild(opt);
+    });
+    var custom = document.createElement("option");
+    custom.value = "custom";
+    custom.textContent = "Custom advisor (from the fields below)";
+    els.consultSeat.appendChild(custom);
+  }
+
+  function focusSeat(seatId) {
+    var entries = els.transcript.querySelectorAll('[data-speaker="' + seatId + '"]');
+    if (entries.length > 0) {
+      var last = entries[entries.length - 1];
+      var prev = els.transcript.querySelectorAll(".tx-entry.focused");
+      prev.forEach(function (el) { el.classList.remove("focused"); });
+      last.classList.add("focused");
+      if (last.scrollIntoView) { last.scrollIntoView({ behavior: "smooth", block: "center" }); }
+    }
+    var kp = els.keypoints.querySelectorAll(".kp-item");
+    kp.forEach(function (el) {
+      if (el.getAttribute("data-seat-id") === seatId) { el.classList.add("focused"); }
+      else { el.classList.remove("focused"); }
+    });
+  }
+
+  els.stage.addEventListener("click", function (ev) {
+    var seat = ev.target.closest ? ev.target.closest("[data-seat-id]") : null;
+    if (seat) { focusSeat(seat.getAttribute("data-seat-id")); }
+  });
+
+  els.stage.addEventListener("keydown", function (ev) {
+    if (ev.key !== "Enter" && ev.key !== " ") { return; }
+    var seat = ev.target.closest ? ev.target.closest("[data-seat-id]") : null;
+    if (seat) {
+      ev.preventDefault();
+      focusSeat(seat.getAttribute("data-seat-id"));
+    }
+  });
+
+  /* Idle blink: one random idle seat dips for 130ms on a 2.4 to 6.6s
+     cycle. Skipped entirely under prefers-reduced-motion. */
+  var reducedMotion = false;
+  try {
+    reducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  } catch (e) { /* ignore */ }
+  function scheduleBlink() {
+    if (reducedMotion) { return; }
+    var delay = 2400 + Math.random() * 4200;
+    setTimeout(function () {
+      var thumbs = els.stage.querySelectorAll(".stage-seat:not(.speaking) .thumb");
+      if (thumbs.length > 0 && !els.debateView.classList.contains("hidden")) {
+        var pick = thumbs[Math.floor(Math.random() * thumbs.length)];
+        pick.classList.add("blinking");
+        setTimeout(function () { pick.classList.remove("blinking"); }, 130);
+      }
+      scheduleBlink();
+    }, delay);
+  }
+
   els.provider.addEventListener("change", function () {
     els.model.value = BR.PROVIDERS[els.provider.value].defaultModel;
   });
+
+  els.mode.addEventListener("change", applyMode);
 
   els.start.addEventListener("click", function () {
     if (running) { return; }
@@ -181,6 +302,36 @@ document.addEventListener("DOMContentLoaded", function () {
       setStatus("Add a viewpoint for your custom advisor, or leave the name blank.");
       return;
     }
+    var mode = els.mode.value;
+    if (mode === "consult") {
+      var seatId = els.consultSeat.value;
+      var advisor = null;
+      if (seatId === "custom") {
+        if (!customName) {
+          setStatus("Pick a seat for the consult, or name your custom advisor above.");
+          return;
+        }
+        advisor = BR.buildCustomPersona(BR.clampText(customName, BR.LIMITS.customName), BR.clampText(customView, BR.LIMITS.viewpoint));
+      } else {
+        BR.PERSONAS.forEach(function (p) { if (p.id === seatId) { advisor = p; } });
+        if (!advisor) { setStatus("Pick a seat for the consult."); return; }
+      }
+      currentConsult = BR.createConsult({
+        title: title,
+        context: context,
+        options: optionLines,
+        focus: els.focus.value,
+        provider: providerId,
+        model: els.model.value.trim() || BR.PROVIDERS[providerId].defaultModel,
+        advisor: advisor
+      });
+      currentState = null;
+      els.setupForm.classList.add("hidden");
+      els.debateView.classList.add("hidden");
+      els.consultView.classList.remove("hidden");
+      runConsult();
+      return;
+    }
     var advisors = BR.PERSONAS.slice();
     if (customName) {
       advisors.push(BR.buildCustomPersona(BR.clampText(customName, BR.LIMITS.customName), BR.clampText(customView, BR.LIMITS.viewpoint)));
@@ -190,25 +341,22 @@ document.addEventListener("DOMContentLoaded", function () {
       context: context,
       options: optionLines,
       focus: els.focus.value,
-      rounds: els.rounds.value,
+      rounds: mode === "quick" ? 1 : els.rounds.value,
+      mode: mode,
       provider: providerId,
       model: els.model.value.trim() || BR.PROVIDERS[providerId].defaultModel,
       advisors: advisors
     });
     els.setupForm.classList.add("hidden");
+    els.consultView.classList.add("hidden");
     els.debateView.classList.remove("hidden");
     renderAll();
     runCurrent();
   });
 
-  els.newDebate.addEventListener("click", function () {
-    if (running) { return; }
-    currentState = null;
-    els.debateView.classList.add("hidden");
-    els.setupForm.classList.remove("hidden");
-    hideError();
-    setStatus("Ready for a new debate.");
-  });
+  els.newDebate.addEventListener("click", resetToSetup);
+  els.consultNew.addEventListener("click", resetToSetup);
+  els.consultRetry.addEventListener("click", runConsult);
 
   els.retryStep.addEventListener("click", function () {
     if (running || !currentState || !currentState.failedStep) { return; }
@@ -263,6 +411,9 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 
   els.model.value = BR.PROVIDERS[els.provider.value].defaultModel;
+  populateConsultSeats();
+  applyMode();
   renderHistoryList();
+  scheduleBlink();
   setStatus("Ready. Describe a decision, and start the board.");
 });
