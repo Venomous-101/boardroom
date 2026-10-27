@@ -114,6 +114,7 @@ function makeCanned(opts) {
         killCriteria: "Close rate drops below 30 percent for two weeks.",
         risks: ["Existing clients churn."],
         tradeoffs: ["Higher margin versus fewer clients."],
+        revisit: "Revisit in two weeks with close rate data.",
         waitFor: null
       }) });
     }
@@ -199,6 +200,113 @@ async function main() {
   const res3b = await BR.resumeDebate(state3, canned3.fn, function () {});
   assert("resume completes after retry", res3b.ok === true, JSON.stringify(res3b));
   assert("offer opening vote exists after resume", !!state3.opening.offer);
+
+  /* ---------- Merge: brains, quick mode, consult, verdict extras ---------- */
+  assert("draft revisit recorded", state.draft.revisit === "Revisit in two weeks with close rate data.", String(state.draft.revisit));
+  assert("every persona has distilled brain fields",
+    BR.PERSONAS.every(function (p) {
+      return p.frameworks && p.frameworks.length >= 3 && p.principles && p.principles.length >= 3 &&
+        p.positions && p.positions.length >= 2 && p.stories && p.stories.length >= 1 &&
+        typeof p.weightWhen === "string" && p.weightWhen.length > 0;
+    }));
+  assert("persona prompt carries frameworks and a hypothetical illustration",
+    BR.PERSONAS.every(function (p) {
+      var prompt = BR.personaPromptFor(p);
+      return prompt.indexOf("Your frameworks:") !== -1 && prompt.indexOf("Illustration (hypothetical") !== -1 && prompt.indexOf("Never quote the person verbatim") !== -1;
+    }));
+  assert("director prompt carries weight guidance",
+    BR.directorUser(makeDebate(1)).indexOf("Weight guidance") !== -1 &&
+    BR.directorUser(makeDebate(1)).indexOf("Weight 3 when") !== -1);
+
+  /* Quick mode: openings, vote, verdict. No debate rounds, no draft. */
+  const quickState = BR.createDebate({
+    title: "Quick test?", context: "C.", options: ["Do A", "Do B"],
+    focus: "balanced", rounds: 3, mode: "quick", provider: "groq", model: "m",
+    advisors: BR.PERSONAS.slice()
+  });
+  assert("quick mode forces 1 round", quickState.rounds === 1, String(quickState.rounds));
+  const quickSteps = BR.buildStepList(quickState).map(function (s) { return s.key; });
+  assert("quick step list has no debate or draft steps",
+    quickSteps.every(function (k) { return k.indexOf("debate:") !== 0 && k !== "draft"; }),
+    quickSteps.join(","));
+  assert("quick step list is director plus openings plus finals plus verdict",
+    quickSteps.length === 18 && quickSteps[0] === "director" && quickSteps[quickSteps.length - 1] === "verdict",
+    quickSteps.join(","));
+  const quickCanned = makeCanned({});
+  const quickRes = await BR.runDebate(quickState, quickCanned.fn, function () {});
+  assert("quick run completes", quickRes.ok === true, JSON.stringify(quickRes));
+  assert("quick verdict exists and draft stays null", !!quickState.verdict && quickState.draft === null);
+  assert("quick verdict label is GO WITH CONDITIONS", quickState.verdict.label === "GO WITH CONDITIONS", quickState.verdict.label);
+  assert("quick markdown notes the skipped draft stage",
+    BR.buildMarkdown(quickState).indexOf("Quick mode skips the draft resolution stage") !== -1);
+
+  /* Consult: one seat, one prose prompt, no scoring state. */
+  const consult = BR.createConsult({
+    title: "Should I raise the price?", context: "Coaching at $2,000.",
+    options: ["Raise to $3,500", "Keep $2,000"], focus: "balanced",
+    provider: "groq", model: "m", advisor: BR.PERSONAS[1]
+  });
+  assert("consult state is consult mode with the picked seat",
+    consult.mode === "consult" && consult.advisor.id === "offer", consult.mode + "/" + (consult.advisor && consult.advisor.id));
+  const consultPrompt = BR.consultUser(consult, consult.advisor);
+  assert("consult prompt carries the decision and the seat pillar",
+    consultPrompt.indexOf("Should I raise the price?") !== -1 && consultPrompt.indexOf("Offers, pricing, and sales") !== -1);
+
+  /* Verdict extras on the canned full run. */
+  assert("verdict carries top reasons", Array.isArray(state.verdict.topReasons) && state.verdict.topReasons.length === 3,
+    JSON.stringify(state.verdict.topReasons));
+  assert("top reason is the operator", state.verdict.topReasons[0].advisorId === "operator",
+    JSON.stringify(state.verdict.topReasons));
+  assert("pillar fixes are empty when every pillar is above 4",
+    Array.isArray(state.verdict.pillarFixes) && state.verdict.pillarFixes.length === 0,
+    JSON.stringify(state.verdict.pillarFixes));
+  const lowPillar = JSON.parse(JSON.stringify(state.verdict.pillarScores));
+  lowPillar.investor = 3;
+  const fixes = BR.pillarFixes(state, lowPillar);
+  assert("pillar at 3 produces a named fix",
+    fixes.length === 1 && fixes[0].advisorId === "investor" &&
+    fixes[0].dimension === "Downside and capital efficiency" &&
+    fixes[0].line === "Canned line for investor.",
+    JSON.stringify(fixes));
+  assert("verdict carries ratified amendments",
+    Array.isArray(state.verdict.amendments) && state.verdict.amendments.length === 1,
+    JSON.stringify(state.verdict.amendments));
+  assert("dissent amendment is not adopted and goes to the minority report",
+    state.verdict.amendments[0].adopted === false &&
+    state.verdict.amendments[0].reason.indexOf("minority report") !== -1,
+    JSON.stringify(state.verdict.amendments));
+  const amendState = JSON.parse(JSON.stringify(state));
+  amendState.final.investor = { vote: "Endorse with amendment", finalScore: 8, finalPillarScore: 7, amendment: "Add a cash test.", line: "L." };
+  const amendVerdict = BR.computeVerdict(amendState);
+  assert("amendment is carried when the resolution passes",
+    amendVerdict.amendments.some(function (a) { return a.advisorId === "investor" && a.adopted === true; }),
+    JSON.stringify(amendVerdict.amendments));
+  assert("markdown carries ratification and pillar fixes",
+    BR.buildMarkdown(state).indexOf("Ratification") !== -1 &&
+    BR.buildMarkdown(state).indexOf("Pillar scorecard") !== -1);
+
+  /* Live-test fixes: debate reason field, fallbacks, draft date anchor. */
+  const debateState = makeDebate(1);
+  debateState.director = { brief: "B.", weights: {}, cruxes: [{ question: "Q?", sides: [] }], assumptions: [] };
+  assert("debate prompt requests a reason field",
+    BR.debateUser(debateState, BR.PERSONAS[0], {}, 1).indexOf('"reason"') !== -1);
+  assert("draft prompt anchors next-step dates to today",
+    BR.draftUser(state, { A: { score: 6.9 }, B: { score: 4 }, C: { score: 2 } }, "A").indexOf("on or after today") !== -1);
+  const blankState = JSON.parse(JSON.stringify(state));
+  blankState.debateRounds.forEach(function (r) {
+    Object.keys(r.cards).forEach(function (id) { r.cards[id].reason = ""; });
+  });
+  const blankVerdict = BR.computeVerdict(blankState);
+  assert("top reasons fall back to final lines when debate reasons are empty",
+    blankVerdict.topReasons.length === 3 &&
+    blankVerdict.topReasons.every(function (r) { return r.reason.length > 0; }) &&
+    blankVerdict.topReasons[0].reason === "Canned line for operator.",
+    JSON.stringify(blankVerdict.topReasons));
+  assert("preferred otherwise falls back to final lines",
+    blankVerdict.preferredOtherwise.length === 2 &&
+    blankVerdict.preferredOtherwise[0].advisorId === "offer" &&
+    blankVerdict.preferredOtherwise[0].reason === "Canned line for offer.",
+    JSON.stringify(blankVerdict.preferredOtherwise));
 
   /* ---------- Verdict bands ---------- */
   assert("band 7.5 is GO", BR.verdictBand(7.5) === "GO");

@@ -7,8 +7,9 @@ This folder holds the Boardroom test harness. It is test-only code.
   drives the full debate state machine with canned provider responses.
 - It asserts scoring math, verdict bands, ruin cap, one-way door cap,
   spread and confidence, support for the resolution, dissent detection,
-  Markdown export, transcript output, JSON extraction edge cases, and
-  input limits.
+  ratification, pillar fixes, top reasons, quick and consult modes,
+  distilled brain fields, Markdown export, transcript output, JSON
+  extraction edge cases, and input limits.
 - `index.html` never loads anything from this folder. The production app
   ships no mock mode and no canned responses.
 - Live provider calls are not tested here because no API key is
