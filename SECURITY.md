@@ -118,3 +118,7 @@ analytics or tracking of any kind.
 - Advisor personas are AI simulations inspired by public frameworks.
   They are labeled as simulations in the room, and no persona claims
   to be, speak for, or be endorsed by a real person.
+- Advisor brains are distilled originals written for this app. They
+  contain no verbatim quotes from real people and no copied brain
+  text from any other project. Simulation labels stay on every
+  persona.

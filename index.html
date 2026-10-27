@@ -31,6 +31,13 @@
     </label>
     <p class="muted">If you leave "Do nothing" out, it is added automatically, so the board always weighs doing nothing.</p>
     <div class="form-grid">
+      <label>Mode
+        <select id="d-mode">
+          <option value="full" selected>Full debate</option>
+          <option value="quick">Quick (openings, vote, verdict)</option>
+          <option value="consult">Consult (one seat, one answer)</option>
+        </select>
+      </label>
       <label>Debate rounds
         <select id="d-rounds">
           <option value="1">1 round</option>
@@ -54,6 +61,12 @@
       </label>
       <label>Model (editable)
         <input type="text" id="d-model" value="openai/gpt-oss-120b">
+      </label>
+    </div>
+    <p class="muted">Full runs the whole council: brief, openings, fault lines, debate, draft resolution, vote, verdict. Quick skips debate rounds and the draft stage. Consult asks one seat a single question, with no scoring and no saved session.</p>
+    <div id="consult-seat-row" class="hidden">
+      <label>Consult seat
+        <select id="d-consult-seat"></select>
       </label>
     </div>
     <h3>Custom advisor (optional)</h3>
@@ -98,6 +111,11 @@
       <div id="cruxes"></div>
     </section>
 
+    <section class="panel">
+      <h2>Draft resolution</h2>
+      <div id="draft"></div>
+    </section>
+
     <div class="room-layout">
       <div>
         <h2>Conversation</h2>
@@ -115,6 +133,16 @@
     </section>
   </section>
 
+  <section id="consult-view" class="panel hidden">
+    <h2>Consult answer</h2>
+    <div id="consult-answer"></div>
+    <div class="btn-row consult-controls">
+      <button id="consult-retry" type="button">Ask again</button>
+      <button id="consult-new" type="button" class="secondary">New question</button>
+    </div>
+    <p class="muted">Consult answers are not scored and not saved to history.</p>
+  </section>
+
   <section class="panel" id="history-panel">
     <h2>Past debates</h2>
     <div id="history"></div>
@@ -123,7 +151,7 @@
 </main>
 
 <footer>
-  <p>Boardroom is an independent project. Inspired by Nate Herk's Roast Room (open-source); built independently, not affiliated with Nate Herk.</p>
+  <p>Boardroom is an independent project. Council protocol and viewer components adapted from Nate Herk's Roast Room (open-source, MIT); built independently, not affiliated with Nate Herk.</p>
   <p>Advisors are AI simulations inspired by public frameworks. They are not the real people and do not speak for them.</p>
 </footer>
 

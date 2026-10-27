@@ -98,35 +98,111 @@ button:disabled { opacity: 0.55; cursor: default; }
 .step.current { color: #14100a; background: #e8a33d; border-color: #e8a33d; }
 .step-sep { color: #5a6b7a; }
 
-/* The stage: portraits in a row, speaker lit, everyone else dimmed. */
+/* The stage: portraits in a row, speaker lit, everyone else dimmed.
+   Speaking seat rises, glows in its seat color, and bobs gently.
+   Idle seats breathe slowly. Hover lifts a seat and shows its card.
+   Click a seat to focus its transcript entries and key points. */
 .stage { display: flex; flex-wrap: wrap; gap: 16px; margin: 12px 0 8px; }
 .stage-seat {
-  width: 128px; text-align: center;
+  position: relative;
+  width: 144px; text-align: center;
   padding: 10px 6px; border-radius: 12px;
   border: 1px solid transparent;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 .stage-seat.dim { opacity: 0.45; }
-.stage-seat.speaking { border-color: var(--seat-color, #e8a33d); outline: 2px solid var(--seat-color, #e8a33d); background: #1a222c; }
+.stage.spotlight .stage-seat.dim { opacity: 0.35; }
+.stage-seat.speaking {
+  border-color: var(--seat-color, #e8a33d);
+  outline: 2px solid var(--seat-color, #e8a33d);
+  background: #1a222c;
+  transform: translateY(-6px);
+  box-shadow: 0 0 0 2px var(--seat-color, #e8a33d), 0 0 24px var(--seat-color, #e8a33d);
+  animation: seatbob 2.4s ease-in-out infinite;
+}
+@keyframes seatbob {
+  0%, 100% { transform: translateY(-6px); }
+  50% { transform: translateY(-10px); }
+}
+.stage-seat:hover { transform: translateY(-4px); }
+.stage-seat:hover .seat-card { display: block; }
 .stage-name { font-weight: 800; margin-top: 8px; }
 .stage-role { color: #9aa7b4; font-size: 12px; }
 .stage-status { margin-top: 6px; font-size: 13px; }
 .stage-note { margin: 4px 0 20px; }
 .sim-note { font-size: 12px; }
 
-/* Round avatar thumb: initials underneath, portrait on top. */
+/* Hover seat card: name, pillar, Chair weight with reason. */
+.seat-card {
+  display: none;
+  position: absolute; left: 50%; bottom: 100%;
+  transform: translateX(-50%);
+  width: 190px; z-index: 5;
+  background: #1a222c; border: 1px solid var(--seat-color, #e8a33d);
+  border-radius: 10px; padding: 10px 12px; text-align: left;
+}
+.seat-card strong { display: block; font-size: 14px; }
+.seat-card span { display: block; color: #9aa7b4; font-size: 12px; margin-top: 4px; }
+
+/* Vote stamp overlaid on a bust after the final vote. */
+.thumb-wrap { position: relative; display: inline-block; }
+.vote-stamp {
+  position: absolute; right: -6px; bottom: -2px; z-index: 2;
+  transform: rotate(-8deg);
+  font-size: 10px; font-weight: 900; letter-spacing: 0.5px;
+  padding: 2px 7px; border-radius: 4px; border: 2px solid #fff; color: #fff;
+}
+.vote-stamp.endorse { background: #2e7d32; }
+.vote-stamp.amend { background: #b7791f; }
+.vote-stamp.dissent { background: #b03a2e; }
+
+/* Rebuttal arrow strip under the stage. */
+.rebuttal-strip { display: flex; gap: 10px; align-items: center; margin: 4px 0 16px; color: #c6d0da; font-size: 14px; }
+.rebuttal-strip svg { flex: none; }
+.rebuttal-arrow { flex: none; }
+
+/* Click-to-focus highlight. */
+.tx-entry.focused, .kp-item.focused { outline: 2px solid #e8a33d; }
+
+/* Round avatar thumb: initials underneath, portrait on top.
+   Stage thumbs are 96px; transcript and key-point thumbs are 40px.
+   Idle thumbs breathe; speaking thumbs pulse; blink dips opacity. */
 .thumb {
   position: relative; display: inline-block;
   width: 40px; height: 40px; min-width: 40px;
   border-radius: 50%; overflow: hidden; vertical-align: middle;
 }
-.thumb.large { width: 72px; height: 72px; min-width: 72px; }
+.thumb.large { width: 96px; height: 96px; min-width: 96px; }
 .thumb-initials {
   display: flex; width: 100%; height: 100%;
   align-items: center; justify-content: center;
   font-weight: 800; font-size: 15px; color: #101418;
+  transition: opacity 130ms ease;
 }
-.thumb.large .thumb-initials { font-size: 22px; }
-.thumb-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+.thumb.large .thumb-initials { font-size: 28px; }
+.thumb-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: 50%; transition: opacity 130ms ease; }
+.thumb.idle { animation: breathe 4s ease-in-out infinite; }
+@keyframes breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.02); }
+}
+.thumb.talking::after {
+  content: ""; position: absolute; inset: -4px; z-index: 1;
+  border-radius: 50%; border: 2px solid var(--seat-color, #e8a33d);
+  animation: pulse-ring 1.6s ease-out infinite;
+}
+@keyframes pulse-ring {
+  0% { transform: scale(0.95); opacity: 0.8; }
+  100% { transform: scale(1.25); opacity: 0; }
+}
+.thumb.blinking .thumb-img, .thumb.blinking .thumb-initials { opacity: 0.2; }
+
+@media (prefers-reduced-motion: reduce) {
+  .stage-seat.speaking { animation: none; }
+  .thumb.idle { animation: none; }
+  .thumb.talking::after { animation: none; }
+}
 
 /* Thinking dots, used on the speaking seat and in the transcript. */
 .thinking { display: inline-flex; gap: 4px; align-items: center; margin-top: 6px; }
@@ -158,6 +234,7 @@ button:disabled { opacity: 0.55; cursor: default; }
 .tx-advisor { display: flex; gap: 12px; align-items: flex-start; }
 .tx-content { min-width: 0; flex: 1; }
 .tx-director { background: #1a222c; border-left: 4px solid #e8a33d; }
+.tx-rebuts { color: #9aa7b4; font-size: 13px; margin-top: 4px; }
 .tx-thinking { display: flex; gap: 12px; align-items: center; color: #c6d0da; font-size: 14px; }
 .tx-thinking .thinking { margin-top: 0; margin-left: 6px; }
 
@@ -172,7 +249,30 @@ button:disabled { opacity: 0.55; cursor: default; }
 .kp-weight { color: #9aa7b4; font-size: 12px; white-space: nowrap; }
 .kp-line { margin-top: 6px; }
 .kp-meta { color: #9aa7b4; font-size: 12px; margin-top: 4px; }
+.kp-weight-reason { color: #9aa7b4; font-size: 12px; margin-top: 2px; }
 .kp-reason { font-size: 14px; margin-top: 4px; }
+
+/* Chair weights table in the brief panel. */
+.weights-table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+.weights-table th, .weights-table td { border: 1px solid #2a3441; padding: 8px 10px; text-align: left; }
+.weights-table th { background: #1a222c; }
+
+/* Draft resolution panel. */
+.draft-rec { font-size: 18px; font-weight: 700; }
+
+/* Verdict sheet option bars. */
+.option-bars { margin: 14px 0; }
+.option-row { margin: 10px 0; }
+.option-row-label { font-size: 14px; }
+.option-bar { background: #0f1419; border: 1px solid #2a3441; border-radius: 8px; height: 22px; overflow: hidden; margin-top: 4px; }
+.option-bar-fill { height: 100%; background: #e8a33d; }
+
+details summary { cursor: pointer; font-weight: 700; margin: 16px 0 8px; }
+
+/* Consult answer. */
+.consult-head { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; }
+.consult-question { color: #c6d0da; font-size: 15px; }
+.consult-answer p { margin: 10px 0; font-size: 15px; }
 
 .vote-badge {
   font-size: 12px; font-weight: 800; letter-spacing: 0.5px;
@@ -221,11 +321,14 @@ footer {
   .topbar h1 { font-size: 28px; }
   .panel { padding: 16px; }
   .stage-seat { width: 104px; }
+  .thumb.large { width: 72px; height: 72px; min-width: 72px; }
+  .thumb.large .thumb-initials { font-size: 22px; }
+  .seat-card { width: 160px; }
 }
 
 @media print {
   body { background: #fff; color: #111; }
-  #setup-form, #history-panel, .view-controls, .status, #error-box, footer, .topbar .disclaimer, #stepper, #stage { display: none !important; }
+  #setup-form, #history-panel, .view-controls, .consult-controls, .status, #error-box, footer, .topbar .disclaimer, #stepper, #stage { display: none !important; }
   #debate-view { display: block !important; }
   .panel, .tx-entry, .kp-item { background: #fff; color: #111; border-color: #ccc; }
   .muted, .tx-kind, .kp-meta, .kp-weight { color: #444; }
