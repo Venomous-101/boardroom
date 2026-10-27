@@ -36,6 +36,212 @@ function assert(name, cond, detail) {
 
 function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
 
+/* ---------- Server function (OpenRouter fallback) ---------- */
+/* Loads api/chat.js in a fresh VM sandbox per test, with fake keys
+   that carry no real key prefix, a mock fetch routed by URL, and a
+   setTimeout wrapper that records each attempt cap. The recorded
+   caps prove the inertness rule: a Groq attempt with no OpenRouter
+   key keeps the full 55 second deadline, while a Groq attempt with a
+   fallback key behind it is capped at 25 seconds. */
+
+const FAKE_GROQ_KEY = "env-groq-key-for-tests";
+const FAKE_OR_KEY = "env-openrouter-key-for-tests";
+const FAKE_GEMINI_KEY = "env-gemini-key-for-tests";
+const serverBodies = [];
+
+function mockResp(ok, status, jsonData, textData) {
+  return {
+    ok: ok,
+    status: status,
+    json: async function () { return jsonData; },
+    text: async function () { return textData || ""; }
+  };
+}
+
+function loadServer(env, script) {
+  const calls = [];
+  const timeouts = [];
+  const serverSandbox = {
+    console: console,
+    module: { exports: {} },
+    process: { env: Object.assign({}, env) },
+    AbortController: AbortController,
+    clearTimeout: clearTimeout,
+    setTimeout: function (fn, ms) { timeouts.push(ms); return setTimeout(fn, ms); },
+    fetch: async function (url, options) {
+      let body = null;
+      try { body = JSON.parse(options.body); } catch (e) { body = null; }
+      calls.push({ url: url, auth: options.headers.Authorization, body: body });
+      return script(url, options, body);
+    }
+  };
+  serverSandbox.globalThis = serverSandbox;
+  vm.createContext(serverSandbox);
+  const code = fs.readFileSync(path.join(root, "api/chat.js"), "utf8");
+  vm.runInContext(code, serverSandbox, { filename: "api/chat.js" });
+  return { handler: serverSandbox.module.exports, calls: calls, timeouts: timeouts };
+}
+
+async function callServer(loaded, body, ip) {
+  const res = {
+    statusCode: 0,
+    body: null,
+    headers: {},
+    status: function (code) { this.statusCode = code; return this; },
+    json: function (obj) { this.body = obj; return this; },
+    setHeader: function (k, v) { this.headers[k] = v; }
+  };
+  const req = {
+    method: "POST",
+    body: body,
+    headers: { "x-forwarded-for": ip },
+    socket: { remoteAddress: ip }
+  };
+  await loaded.handler(req, res);
+  serverBodies.push(res.body);
+  return res;
+}
+
+function scriptFor(routes) {
+  return function (url, options, body) {
+    for (const r of routes) {
+      if (url.indexOf(r.match) !== -1) { return r.make(body); }
+    }
+    throw new Error("unexpected url: " + url);
+  };
+}
+
+function groqOk(text) {
+  return mockResp(true, 200, { choices: [{ message: { content: text } }] });
+}
+
+function groqErr(status) {
+  return mockResp(false, status, null, "groq error " + status);
+}
+
+function orOk(body) {
+  return mockResp(true, 200, { model: body.models[0], choices: [{ message: { content: "fallback text" } }] });
+}
+
+function orErr(status) {
+  return mockResp(false, status, null, "openrouter error " + status);
+}
+
+function geminiOk() {
+  return mockResp(true, 200, { candidates: [{ content: { parts: [{ text: "gemini text" }] } }] });
+}
+
+async function serverTests() {
+  const base = { provider: "groq", model: "openai/gpt-oss-120b", system: "sys", user: "usr" };
+  const bothKeys = { GROQ_API_KEY: FAKE_GROQ_KEY, OPENROUTER_API_KEY: FAKE_OR_KEY, GEMINI_API_KEY: FAKE_GEMINI_KEY };
+
+  /* Groq 429 then OpenRouter success, with the full free chain. */
+  const t1 = loadServer(bothKeys, scriptFor([
+    { match: "api.groq.com", make: function () { return groqErr(429); } },
+    { match: "openrouter.ai", make: orOk }
+  ]));
+  const r1 = await callServer(t1, base, "10.0.0.1");
+  assert("server: groq 429 falls back to openrouter", r1.statusCode === 200 && r1.body.ok === true && r1.body.text === "fallback text", JSON.stringify(r1.body));
+  assert("server: fallback servedBy is openrouter chain head", eq(r1.body.servedBy, { provider: "openrouter", model: BR.OPENROUTER_FREE_CHAIN[0] }), JSON.stringify(r1.body.servedBy));
+  const orCall = t1.calls.find(function (c) { return c.url.indexOf("openrouter.ai") !== -1; });
+  assert("server: fallback sends the full free chain", !!orCall && eq(orCall.body.models, BR.OPENROUTER_FREE_CHAIN) && orCall.body.model === BR.OPENROUTER_FREE_CHAIN[0], JSON.stringify(orCall && orCall.body));
+  assert("server: groq and openrouter auth use their own keys",
+    t1.calls.length === 2 && t1.calls[0].auth === "Bearer " + FAKE_GROQ_KEY && orCall.auth === "Bearer " + FAKE_OR_KEY,
+    JSON.stringify(t1.calls.map(function (c) { return c.auth; })));
+  assert("server: fallback attempt caps are 25s each", eq(t1.timeouts, [25000, 25000]), JSON.stringify(t1.timeouts));
+
+  /* All free fallbacks exhausted: primary failure reported, flagged. */
+  const t2 = loadServer(bothKeys, scriptFor([
+    { match: "api.groq.com", make: function () { return groqErr(429); } },
+    { match: "openrouter.ai", make: function () { return orErr(429); } }
+  ]));
+  const r2 = await callServer(t2, base, "10.0.0.2");
+  assert("server: all fallbacks exhausted reports primary failure flagged",
+    r2.body.ok === false && r2.body.status === 429 && r2.body.fallbackExhausted === true, JSON.stringify(r2.body));
+
+  /* Groq 401 fails fast even with a fallback key present. */
+  const t3 = loadServer(bothKeys, scriptFor([
+    { match: "api.groq.com", make: function () { return groqErr(401); } },
+    { match: "openrouter.ai", make: orOk }
+  ]));
+  const r3 = await callServer(t3, base, "10.0.0.3");
+  assert("server: groq 401 fails fast with no fallback",
+    r3.body.ok === false && r3.body.status === 401 && !r3.body.fallbackExhausted && !r3.body.fallbackSkipped && t3.calls.length === 1,
+    JSON.stringify(r3.body) + " calls=" + t3.calls.length);
+
+  /* OpenRouter direct with a free model: requested model first, then the chain. */
+  const t4 = loadServer(bothKeys, scriptFor([{ match: "openrouter.ai", make: orOk }]));
+  const r4 = await callServer(t4, { provider: "openrouter", model: BR.OPENROUTER_FREE_CHAIN[2], system: "sys", user: "usr" }, "10.0.0.4");
+  const expected4 = [BR.OPENROUTER_FREE_CHAIN[2], BR.OPENROUTER_FREE_CHAIN[0], BR.OPENROUTER_FREE_CHAIN[1], BR.OPENROUTER_FREE_CHAIN[3]];
+  assert("server: openrouter direct free model goes first then the chain",
+    r4.body.ok === true && eq(t4.calls[0].body.models, expected4) && r4.body.servedBy.model === BR.OPENROUTER_FREE_CHAIN[2],
+    JSON.stringify(t4.calls[0] && t4.calls[0].body) + " " + JSON.stringify(r4.body.servedBy));
+  /* Full-deadline caps are timing-dependent: the cap is min(55000, remaining time), so the recorded value is 55000 minus elapsed milliseconds. Assert the property (full deadline, not the 25s fallback cap), not the exact millisecond. */
+  assert("server: openrouter direct single attempt keeps the full deadline", t4.timeouts.length === 1 && t4.timeouts[0] > 25000 && t4.timeouts[0] <= 55000, JSON.stringify(t4.timeouts));
+
+  /* OpenRouter direct with a paid model: sent alone, never chained. */
+  const t5 = loadServer(bothKeys, scriptFor([{ match: "openrouter.ai", make: orOk }]));
+  const r5 = await callServer(t5, { provider: "openrouter", model: "anthropic/claude-sonnet-5", system: "sys", user: "usr" }, "10.0.0.5");
+  assert("server: openrouter direct paid model stays alone",
+    r5.body.ok === true && eq(t5.calls[0].body.models, ["anthropic/claude-sonnet-5"]), JSON.stringify(t5.calls[0] && t5.calls[0].body));
+
+  /* Bad provider rejected before any provider call. */
+  const t6 = loadServer(bothKeys, scriptFor([]));
+  const r6 = await callServer(t6, { provider: "bogus", model: "m", system: "sys", user: "usr" }, "10.0.0.6");
+  assert("server: bad provider is rejected with 400", r6.statusCode === 400 && t6.calls.length === 0, String(r6.statusCode));
+
+  /* Gemini path unchanged apart from the servedBy label. */
+  const t7 = loadServer(bothKeys, scriptFor([{ match: "generativelanguage.googleapis.com", make: geminiOk }]));
+  const r7 = await callServer(t7, { provider: "gemini", model: "gemini-2.0-flash", system: "sys", user: "usr" }, "10.0.0.7");
+  assert("server: gemini returns text with gemini servedBy",
+    r7.body.ok === true && r7.body.text === "gemini text" && eq(r7.body.servedBy, { provider: "gemini", model: "gemini-2.0-flash" }),
+    JSON.stringify(r7.body));
+  assert("server: gemini single attempt keeps the full deadline", t7.timeouts.length === 1 && t7.timeouts[0] > 25000 && t7.timeouts[0] <= 55000, JSON.stringify(t7.timeouts));
+
+  /* Missing Groq key: clear not_configured, no provider call. */
+  const t8 = loadServer({}, scriptFor([{ match: "api.groq.com", make: function () { return groqOk("x"); } }]));
+  const r8 = await callServer(t8, base, "10.0.0.8");
+  assert("server: missing groq key is not_configured",
+    r8.statusCode === 500 && r8.body.error && r8.body.error.code === "not_configured" && t8.calls.length === 0,
+    JSON.stringify(r8.body));
+
+  /* Chain discipline: free only, matches the page list, head is the default. */
+  const chain = t1.handler.OPENROUTER_FREE_CHAIN;
+  assert("server: chain is free only and matches the page list",
+    Array.isArray(chain) && chain.length >= 3 && chain.every(function (m) { return /:free$/.test(m); }) && eq(chain, BR.OPENROUTER_FREE_CHAIN),
+    JSON.stringify(chain));
+  assert("server: openrouter default model is the chain head",
+    BR.PROVIDERS.openrouter.defaultModel === BR.OPENROUTER_FREE_CHAIN[0], BR.PROVIDERS.openrouter.defaultModel);
+
+  /* Unset-key case: the fallback must be completely inert. */
+  const groqOnly = { GROQ_API_KEY: FAKE_GROQ_KEY };
+  const u1 = loadServer(groqOnly, scriptFor([{ match: "api.groq.com", make: function () { return groqErr(429); } }]));
+  const ru1 = await callServer(u1, base, "10.0.1.1");
+  assert("unset key: groq 429 returns fallbackSkipped and never calls openrouter",
+    ru1.body.ok === false && ru1.body.status === 429 && ru1.body.fallbackSkipped === "no_openrouter_key" && !ru1.body.fallbackExhausted &&
+    u1.calls.length === 1 && u1.calls[0].url.indexOf("api.groq.com") !== -1,
+    JSON.stringify(ru1.body) + " calls=" + u1.calls.length);
+  assert("unset key: failed groq attempt keeps the full deadline, not the 25s fallback cap",
+    u1.timeouts.length === 1 && u1.timeouts[0] > 25000 && u1.timeouts[0] <= 55000, JSON.stringify(u1.timeouts));
+  const u2 = loadServer(groqOnly, scriptFor([{ match: "api.groq.com", make: function () { return groqOk("groq text"); } }]));
+  const ru2 = await callServer(u2, base, "10.0.1.2");
+  assert("unset key: groq success works with no openrouter call",
+    ru2.body.ok === true && ru2.body.text === "groq text" && eq(ru2.body.servedBy, { provider: "groq", model: base.model }) && u2.calls.length === 1,
+    JSON.stringify(ru2.body));
+  assert("unset key: successful groq attempt keeps the full deadline", u2.timeouts.length === 1 && u2.timeouts[0] > 25000 && u2.timeouts[0] <= 55000, JSON.stringify(u2.timeouts));
+  const u3 = loadServer(groqOnly, scriptFor([{ match: "api.groq.com", make: function () { return groqErr(401); } }]));
+  const ru3 = await callServer(u3, base, "10.0.1.3");
+  assert("unset key: groq 401 fails fast with no fallback fields",
+    ru3.body.ok === false && ru3.body.status === 401 && !ru3.body.fallbackSkipped && !ru3.body.fallbackExhausted && u3.calls.length === 1,
+    JSON.stringify(ru3.body));
+
+  /* No response anywhere echoes a key value. */
+  assert("server: no response echoes a key", serverBodies.every(function (b) {
+    const s = JSON.stringify(b);
+    return s.indexOf(FAKE_GROQ_KEY) === -1 && s.indexOf(FAKE_OR_KEY) === -1 && s.indexOf(FAKE_GEMINI_KEY) === -1;
+  }));
+}
+
 /* ---------- Canned provider ---------- */
 
 const WEIGHTS = {
@@ -381,6 +587,35 @@ async function main() {
     const c = BR.buildCustomPersona("The Skeptic", "Demand proof of distribution.");
     return c.id === "custom" && c.initials === "TS" && BR.personaPromptFor(c).indexOf("Demand proof of distribution.") !== -1;
   })());
+
+  /* ---------- Provider badge on served steps ---------- */
+  const badgeState = makeDebate(1);
+  const badgeCanned = makeCanned({});
+  const badgeFn = function (s, step) {
+    return badgeCanned.fn(s, step).then(function (res) {
+      if (step.key === "opening:operator" && res.ok) {
+        res.servedBy = { provider: "openrouter", model: BR.OPENROUTER_FREE_CHAIN[0] };
+      }
+      return res;
+    });
+  };
+  const badgeRes = await BR.runDebate(badgeState, badgeFn, function () {});
+  assert("badge: run with a served step completes", badgeRes.ok === true, JSON.stringify(badgeRes));
+  assert("badge: state records the serving provider and model",
+    eq(badgeState.servedBy["opening:operator"], { provider: "openrouter", model: BR.OPENROUTER_FREE_CHAIN[0] }),
+    JSON.stringify(badgeState.servedBy));
+  const badgeEntry = badgeState.transcript.find(function (t) { return t.stepKey === "opening:operator"; });
+  assert("badge: operator opening entry carries its step key", !!badgeEntry,
+    JSON.stringify(badgeState.transcript.map(function (t) { return t.stepKey; })));
+  const badgeTx = BR.buildTranscriptText(badgeState);
+  assert("badge: transcript flags only the fallback-served step",
+    badgeTx.indexOf("[via openrouter · " + BR.OPENROUTER_FREE_CHAIN[0] + "]") !== -1 &&
+    badgeTx.split("[via ").length === 2, badgeTx);
+  const freshState = makeDebate(1);
+  assert("badge: new debate starts with an empty served map", eq(freshState.servedBy, {}), JSON.stringify(freshState.servedBy));
+
+  /* ---------- Server function: OpenRouter fallback ---------- */
+  await serverTests();
 
   console.log("\n" + passed + " passed, " + failed + " failed.");
   if (failed > 0) {
