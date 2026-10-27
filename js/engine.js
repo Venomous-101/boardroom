@@ -99,6 +99,7 @@ BR.createDebate = function (input) {
     verdict: null,
     transcript: [],
     providerSwitches: [],
+    servedBy: {},
     failedStep: null,
     completed: false
   };
@@ -735,6 +736,16 @@ BR.stepExecutor = function (state, step, callFn, onProgress) {
         if (attempts < 3) { return runAttempt(); }
         return { ok: false, error: { code: "bad_output", message: "The model output was missing required scores 3 times for this step. Retry this step." }, attempts: attempts };
       }
+      /* Record which provider and model served this step, and tag the
+         transcript entry it produced, so the room can badge it. Every
+         step appends exactly one transcript entry, so the last entry
+         is this step's entry. */
+      if (res.servedBy) {
+        if (!state.servedBy) { state.servedBy = {}; }
+        state.servedBy[step.key] = res.servedBy;
+      }
+      var lastEntry = state.transcript[state.transcript.length - 1];
+      if (lastEntry) { lastEntry.stepKey = step.key; }
       return { ok: true, attempts: attempts };
     });
   };
@@ -822,6 +833,8 @@ BR.runDebate = function (state, callFn, onProgress) {
     var step = steps[index];
     if (step.key === "verdict") {
       var applied = BR.applyStepResult(state, step, {});
+      var lastVerdict = state.transcript[state.transcript.length - 1];
+      if (lastVerdict) { lastVerdict.stepKey = "verdict"; }
       index += 1;
       return next();
     }
@@ -855,7 +868,13 @@ BR.buildTranscriptText = function (state) {
   state.options.forEach(function (o) { lines.push(o.id + ". " + o.label); });
   lines.push("");
   state.transcript.forEach(function (t) {
-    lines.push("[" + t.title + "] " + t.speaker + ": " + t.body);
+    var line = "[" + t.title + "] " + t.speaker + ": " + t.body;
+    var served = t.stepKey && state.servedBy ? state.servedBy[t.stepKey] : null;
+    if (served && served.provider && served.model &&
+        (served.provider !== state.provider || served.model !== state.model)) {
+      line += " [via " + served.provider + " · " + served.model + "]";
+    }
+    lines.push(line);
   });
   if (state.verdict) {
     lines.push("");

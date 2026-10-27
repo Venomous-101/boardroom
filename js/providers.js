@@ -4,6 +4,10 @@
    calls the chosen provider with a key from the server environment.
    No key appears in this file, in the page, in the browser's storage,
    or in any request the browser makes to a third party.
+   When Groq is rate-limited or errors, the server function
+   automatically tries free OpenRouter models and reports which
+   provider and model served each call, so a fallback is visible,
+   never silent.
    No request body is ever logged. */
 
 var BR = (function () {
@@ -11,11 +15,25 @@ var BR = (function () {
   globalThis.BR = globalThis.BR || {}; return globalThis.BR;
 })();
 
+/* Free-only OpenRouter fallback chain. Keep in sync with api/chat.js;
+   the harness asserts the two lists match. Every id ends in :free. */
+BR.OPENROUTER_FREE_CHAIN = [
+  "google/gemma-4-31b-it:free",
+  "google/gemma-4-26b-a4b-it:free",
+  "dots-studio/dots-3-note-preview:free",
+  "nvidia/nemotron-3-ultra-550b-a55b:free"
+];
+
 BR.PROVIDERS = {
   groq: {
     id: "groq",
     label: "Groq",
     defaultModel: "openai/gpt-oss-120b"
+  },
+  openrouter: {
+    id: "openrouter",
+    label: "OpenRouter",
+    defaultModel: "google/gemma-4-31b-it:free"
   },
   gemini: {
     id: "gemini",
@@ -110,7 +128,9 @@ BR.toConfidence = function (value, fallback) {
 };
 
 /* One LLM call through this deployment's own server function, with a
-   timeout. Never logs the request body. */
+   timeout. Never logs the request body. The result carries servedBy
+   (provider and model that actually served the call), so the room can
+   show when a free OpenRouter fallback served a step. */
 BR.callLLM = function (providerId, model, systemPrompt, userPrompt) {
   var provider = BR.providerById(providerId);
   var controller = null;
@@ -134,13 +154,23 @@ BR.callLLM = function (providerId, model, systemPrompt, userPrompt) {
         return { ok: false, error: { code: "http_" + res.status, message: "The server function returned HTTP " + res.status + ". Retry this step." } };
       }
       if (data && data.ok && typeof data.text === "string" && data.text.length > 0) {
-        return { ok: true, text: data.text };
+        var servedBy = (data.servedBy && typeof data.servedBy.provider === "string" && typeof data.servedBy.model === "string")
+          ? { provider: data.servedBy.provider, model: data.servedBy.model }
+          : { provider: provider.id, model: model };
+        return { ok: true, text: data.text, servedBy: servedBy };
       }
       if (data && typeof data.status === "number") {
         if (data.status === 200 && !data.body) {
           return { ok: false, error: { code: "empty_response", message: provider.label + " returned an empty response. Retry this step." } };
         }
-        return { ok: false, error: BR.mapProviderError(provider.id, data.status, data.body) };
+        var mapped = BR.mapProviderError(provider.id, data.status, data.body);
+        if (data.fallbackExhausted) {
+          mapped.message += " The OpenRouter free fallbacks were also exhausted.";
+        }
+        if (data.fallbackSkipped === "no_openrouter_key") {
+          mapped.message += " Add an OpenRouter key to enable automatic free fallback.";
+        }
+        return { ok: false, error: mapped };
       }
       return { ok: false, error: { code: "proxy_error", message: "The server function returned an unusable response. Retry this step." } };
     });

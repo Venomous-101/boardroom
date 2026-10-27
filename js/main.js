@@ -72,10 +72,17 @@ document.addEventListener("DOMContentLoaded", function () {
     els.status.textContent = text;
   }
 
+  var providerOrder = ["groq", "openrouter", "gemini"];
+
+  function nextProvider(current) {
+    var i = providerOrder.indexOf(current);
+    return providerOrder[(i + 1) % providerOrder.length];
+  }
+
   function showError(failed) {
     els.errorText.textContent = "Step failed: " + failed.label + ". Cause: " + failed.error.message;
     els.errorBox.classList.remove("hidden");
-    var other = currentState.provider === "groq" ? "gemini" : "groq";
+    var other = nextProvider(currentState.provider);
     els.switchProvider.classList.remove("hidden");
     els.switchProvider.textContent = "Retry this step with " + BR.PROVIDERS[other].label + " instead";
   }
@@ -194,6 +201,7 @@ document.addEventListener("DOMContentLoaded", function () {
       running = false;
       if (res.ok && res.text) {
         currentConsult.answer = res.text;
+        currentConsult.servedBy = res.servedBy || null;
         currentConsult.completed = true;
         setStatus("Consult answer ready. Consult answers are not saved to history.");
       } else {
@@ -365,7 +373,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   els.switchProvider.addEventListener("click", function () {
     if (running || !currentState) { return; }
-    var other = currentState.provider === "groq" ? "gemini" : "groq";
+    var other = nextProvider(currentState.provider);
     currentState.providerSwitches.push({ from: currentState.provider, to: other, at: currentState.failedStep ? currentState.failedStep.key : "" });
     currentState.provider = other;
     currentState.model = BR.PROVIDERS[other].defaultModel;

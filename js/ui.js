@@ -41,6 +41,24 @@ BR.voteStampText = function (vote) {
   return "";
 };
 
+/* Small badge naming which provider and model served a step. Empty
+   when no serving info exists, so old saved debates render cleanly.
+   Provider and model are escaped like every other dynamic string. */
+BR.providerBadge = function (servedBy) {
+  if (!servedBy || !servedBy.provider || !servedBy.model) { return ""; }
+  var label = (BR.PROVIDERS && BR.PROVIDERS[servedBy.provider])
+    ? BR.PROVIDERS[servedBy.provider].label
+    : servedBy.provider;
+  return '<span class="provider-badge">via ' + BR.esc(label) + ' &middot; ' + BR.esc(servedBy.model) + '</span>';
+};
+
+/* Badge for one transcript step, looked up by the step key recorded
+   when the step succeeded. */
+BR.servedBadgeFor = function (state, stepKey) {
+  if (!state || !stepKey || !state.servedBy) { return ""; }
+  return BR.providerBadge(state.servedBy[stepKey]);
+};
+
 BR.latestCardFor = function (state, advisorId) {
   if (state.debateRounds.length > 0) {
     var last = state.debateRounds[state.debateRounds.length - 1].cards[advisorId];
@@ -215,7 +233,7 @@ BR.renderTranscript = function (container, state, speakingId) {
   state.transcript.forEach(function (t) {
     if (t.kind === "director" || t.speaker === "Director") {
       html += '<div class="tx-entry tx-director" data-speaker="director" data-kind="' + BR.esc(t.kind) + '"><div class="tx-head"><span class="tx-speaker">Director</span>';
-      html += '<span class="tx-kind">' + BR.esc(t.title) + '</span></div>';
+      html += '<span class="tx-kind">' + BR.esc(t.title) + '</span>' + BR.servedBadgeFor(state, t.stepKey) + '</div>';
       html += '<div class="tx-body">' + BR.esc(t.body) + '</div></div>';
     } else {
       var adv = BR.advisorByShort(state, t.speaker);
@@ -223,7 +241,7 @@ BR.renderTranscript = function (container, state, speakingId) {
       html += '<div class="tx-entry tx-advisor" data-speaker="' + BR.esc(speakerId) + '" data-kind="' + BR.esc(t.kind) + '">';
       if (adv) { html += BR.avatarThumb(adv, ""); }
       html += '<div class="tx-content"><div class="tx-head"><span class="tx-speaker">' + BR.esc(t.speaker) + '</span>';
-      html += '<span class="tx-kind">' + BR.esc(t.title) + '</span></div>';
+      html += '<span class="tx-kind">' + BR.esc(t.title) + '</span>' + BR.servedBadgeFor(state, t.stepKey) + '</div>';
       html += '<div class="tx-body">' + BR.esc(t.body) + '</div>';
       if (t.disagreeWith) {
         html += '<div class="tx-rebuts">Rebuts ' + BR.esc(t.disagreeWith) + '</div>';
@@ -443,6 +461,7 @@ BR.renderConsult = function (container, consult) {
   var html = '<div class="consult-head">' + BR.avatarThumb(a, "") + '<div><strong>' + BR.esc(a.short) + '</strong>';
   html += '<div class="muted">' + BR.esc(a.pillar) + '</div></div></div>';
   html += '<p class="consult-question">' + BR.esc(consult.question) + '</p>';
+  if (consult.servedBy) { html += '<div>' + BR.providerBadge(consult.servedBy) + '</div>'; }
   if (consult.answer) {
     html += '<div class="consult-answer">';
     consult.answer.split(/\n+/).forEach(function (para) {
