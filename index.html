@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Boardroom: AI Board of Advisors</title>
+<meta name="description" content="Boardroom runs a live debate of AI advisor simulations on your business decision, using your own API key. No server, no accounts, no tracking.">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div>
+    <h1>Boardroom</h1>
+    <p class="tagline">A live board of AI advisor simulations for hard business decisions.</p>
+  </div>
+  <p class="disclaimer">Advisors are AI simulations inspired by public frameworks. They are not the real people, and nothing here is affiliated with or endorsed by them.</p>
+</header>
+
+<main>
+  <section class="panel" id="key-panel">
+    <h2>Your API keys (bring your own key)</h2>
+    <p>Boardroom has no server, no database, no accounts, and no tracking. Your key is stored only in this browser, in localStorage, and is sent only to the provider you chose. Nothing you type here is stored anywhere else, and your dilemma text goes only to that provider as part of the debate prompts.</p>
+    <div class="key-row">
+      <label>Groq API key
+        <input type="password" id="key-groq" autocomplete="off" placeholder="Your Groq key">
+      </label>
+      <span class="key-help">Free key at console.groq.com</span>
+    </div>
+    <div class="key-row">
+      <label>Google Gemini API key
+        <input type="password" id="key-gemini" autocomplete="off" placeholder="Your Gemini key">
+      </label>
+      <span class="key-help">Free key at aistudio.google.com</span>
+    </div>
+    <div class="btn-row">
+      <button id="save-keys" type="button">Save keys in this browser</button>
+      <button id="clear-keys" type="button" class="secondary">Clear saved keys</button>
+    </div>
+    <p id="key-status" class="muted" aria-live="polite"></p>
+  </section>
+
+  <section class="panel" id="setup-form">
+    <h2>Start a debate</h2>
+    <label>Decision title
+      <input type="text" id="d-title" maxlength="200" placeholder="Example: Should I raise my coaching price to $3,500?">
+    </label>
+    <label>Context
+      <textarea id="d-context" maxlength="4000" rows="5" placeholder="What you sell, to whom, revenue, cash, team size, deadline, what success looks like, and which way you are leaning. The board tests your lean instead of agreeing with it."></textarea>
+    </label>
+    <label>Options, one per line (up to 4)
+      <textarea id="d-options" rows="4" placeholder="Raise to $3,500 for everyone now&#10;Raise for new clients only&#10;Keep $2,000"></textarea>
+    </label>
+    <p class="muted">If you leave "Do nothing" out, it is added automatically, so the board always weighs doing nothing.</p>
+    <div class="form-grid">
+      <label>Debate rounds
+        <select id="d-rounds">
+          <option value="1">1 round</option>
+          <option value="2" selected>2 rounds</option>
+          <option value="3">3 rounds</option>
+        </select>
+      </label>
+      <label>Focus
+        <select id="d-focus">
+          <option value="balanced" selected>Balanced</option>
+          <option value="cost">Cost</option>
+          <option value="speed">Speed</option>
+          <option value="risk">Risk</option>
+        </select>
+      </label>
+      <label>Provider
+        <select id="d-provider">
+          <option value="groq" selected>Groq</option>
+          <option value="gemini">Google Gemini</option>
+        </select>
+      </label>
+      <label>Model (editable)
+        <input type="text" id="d-model" value="llama-3.3-70b-versatile">
+      </label>
+    </div>
+    <h3>Custom advisor (optional)</h3>
+    <p class="muted">Add one advisor of your own. Give a name and the viewpoint it must argue from, and it joins the debate like any other seat.</p>
+    <label>Custom advisor name
+      <input type="text" id="d-custom-name" maxlength="60" placeholder="Example: The Skeptic">
+    </label>
+    <label>Custom advisor viewpoint
+      <textarea id="d-custom-view" maxlength="500" rows="3" placeholder="Example: Argue that most growth plans fail on distribution, not product, and demand proof of a working channel before any spend."></textarea>
+    </label>
+    <div class="btn-row">
+      <button id="start-debate" type="button" class="primary">Start the board</button>
+    </div>
+  </section>
+
+  <p id="status" class="status" aria-live="polite"></p>
+
+  <div id="error-box" class="panel error hidden">
+    <p id="error-text"></p>
+    <div class="btn-row">
+      <button id="retry-step" type="button">Retry this step</button>
+      <button id="switch-provider" type="button" class="secondary hidden">Retry with the other provider</button>
+    </div>
+    <p class="muted">Retrying runs only the failed step. Earlier steps are not rerun and nothing is lost.</p>
+  </div>
+
+  <section id="debate-view" class="hidden">
+    <div class="btn-row view-controls">
+      <button id="new-debate" type="button" class="secondary">New debate</button>
+      <button id="download-md" type="button">Download Markdown summary</button>
+      <button id="copy-tx" type="button">Copy transcript</button>
+      <button id="print-btn" type="button">Print / save PDF</button>
+    </div>
+
+    <h2>The board</h2>
+    <div id="board" class="board-grid"></div>
+
+    <h2>Transcript</h2>
+    <div id="transcript" class="transcript"></div>
+
+    <h2>Scorecard</h2>
+    <div id="scorecard"></div>
+
+    <h2>Verdict</h2>
+    <div id="verdict"></div>
+  </section>
+
+  <section class="panel" id="history-panel">
+    <h2>Past debates</h2>
+    <div id="history"></div>
+    <p class="muted">Past debates are stored only in this browser. Clearing your browser data removes them.</p>
+  </section>
+</main>
+
+<footer>
+  <p>Boardroom is an independent project. Inspired by Nate Herk's Roast Room (open-source); built independently, not affiliated with Nate Herk.</p>
+  <p>Advisors are AI simulations inspired by public frameworks. They are not the real people and do not speak for them.</p>
+</footer>
+
+<script src="js/personas.js"></script>
+<script src="js/providers.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
