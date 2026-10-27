@@ -40,35 +40,41 @@ analytics or tracking of any kind.
 ## How keys are handled
 
 - Keys live only in the server environment (`GROQ_API_KEY`,
-  `GEMINI_API_KEY`). They are never in the repository, never in the
-  page, never in the browser's storage, and never in a URL.
+  `OPENROUTER_API_KEY`, `GEMINI_API_KEY`). They are never in the
+  repository, never in the page, never in the browser's storage, and
+  never in a URL.
 - `.env.example` lists the variable names with blank values. A filled
   copy must never be committed.
 - Keys are never logged by the server function, never displayed, and
   never sent to any host except the chosen provider's API host.
-- Groq calls use the Authorization header. Gemini calls use the
-  `x-goog-api-key` header. The key is never put in a URL query
-  parameter.
+- Groq and OpenRouter calls use the Authorization header. Gemini
+  calls use the `x-goog-api-key` header. The key is never put in a
+  URL query parameter.
 - A provider without its server key returns a clear "not configured"
   error. It never falls back to a key from anywhere else.
-- Switching providers never happens silently. The switch button is
-  offered on a failed step, and the switch is recorded in the
-  transcript.
+- Automatic fallback is visible, never silent: when Groq fails, the
+  server tries free OpenRouter models and each transcript step shows
+  a badge naming which provider and model served it. The manual
+  switch button is still offered on a failed step, and a manual
+  switch is recorded in the transcript.
 - Past debate history stored in localStorage contains no keys.
 
 ## How the server function is protected
 
 - Same-origin only. The function sends no CORS headers, so other
   websites cannot call it from a browser.
-- Method and shape checks: POST only, provider must be groq or
-  gemini, model name capped at 200 characters, system prompt capped
-  at 8,000 characters, user prompt capped at 12,000 characters.
+- Method and shape checks: POST only, provider must be groq, gemini,
+  or openrouter, model name capped at 200 characters, system prompt
+  capped at 8,000 characters, user prompt capped at 12,000
+  characters.
 - Per-address rate limit: 120 requests per 10 minutes. This is a
   tripwire, not authentication: serverless instances do not share
   the counter, so it cannot stop a determined caller. URL privacy
   and deployment protection are the real controls.
-- Provider timeout of 60 seconds per call, matching the function
-  limit. The page side times out at 90 seconds.
+- Provider attempts time out at 25 seconds when a fallback leg
+  follows, or at the 55 second function deadline for a single
+  attempt, under the 60 second function limit. The page side times
+  out at 90 seconds.
 - Provider error bodies are truncated to 400 characters before they
   reach the page, so provider internals do not leak through.
 

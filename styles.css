@@ -335,3 +335,12 @@ footer {
   .verdict-label { background: #ddd; color: #111; }
   .room-layout { grid-template-columns: 1fr; }
 }
+
+/* Provider badge: small pill naming which provider and model served a
+   transcript step, so a fallback is visible, never silent. */
+.provider-badge {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.3px;
+  border: 1px solid #3a4756; border-radius: 999px;
+  padding: 2px 8px; color: #9aa7b4; overflow-wrap: anywhere;
+}
+.tx-head .provider-badge { margin-left: 2px; }

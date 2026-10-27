@@ -39,7 +39,8 @@ You can add one custom advisor seat: a name (60 characters max) and the viewpoin
 
 The room shows the debate live: a progress stepper (Brief, Openings, Fault lines, Debate, Draft, Vote, Verdict), the seats' portraits around the stage with the current speaker lit, risen, and glowing while everyone else dims, the conversation as it happens, and a key-points panel with one line per seat. Avatars animate with pure CSS and JS: the speaking seat bobs and pulses, idle seats breathe and blink, hovering a seat lifts it and shows its name, pillar, and Chair weight, and clicking a seat focuses its latest transcript entries and key points. Debate rounds show a rebuttal arrow from the speaker to the seat it rebuts. Motion honors prefers-reduced-motion.
 
-A full debate costs 26 LLM calls at 1 round, 34 at 2 rounds, and 42 at 3 rounds, plus one call per step if you add a custom advisor. A quick debate costs 17 calls. A consult costs 1 call. Calls run sequentially with live progress, which keeps free-tier rate limits in range. Each call has a 90 second timeout on the page side and a 60 second limit in the server function. If a call fails, the app names the exact advisor and round, offers a retry for that step only without losing the debate, and offers a one-click provider switch. It never switches providers silently. If the other provider has no server key, the error says so plainly.
+A full debate costs 26 LLM calls at 1 round, 34 at 2 rounds, and 42 at 3 rounds, plus one call per step if you add a custom advisor. A quick debate costs 17 calls. A consult costs 1 call. A step that falls back costs one extra call for the fallback attempt. Calls run sequentially with live progress. Each provider attempt runs inside a 55 second function deadline (25 seconds for the Groq attempt when a fallback leg follows), and the page side times out at 90 seconds. If a call fails, the app names the exact advisor and round, offers a retry for that step only without losing the debate, and offers a one-click provider switch.
+Rate limits are handled before you ever see them: when Groq is rate-limited or errors, the server instantly tries free OpenRouter models instead, in this order: google/gemma-4-31b-it:free, google/gemma-4-26b-a4b-it:free, dots-studio/dots-3-note-preview:free, nvidia/nemotron-3-ultra-550b-a55b:free. The chain lists free models only, so nothing here spends money on its own. Each transcript step carries a small badge naming which provider and model served it, so a fallback is visible, never silent. If Groq and every free fallback fail, the error says so plainly. If no OpenRouter key is configured, the error says that too, and the step falls back to the manual retry. A rejected key or a bad model name fails fast instead: switching providers cannot fix a configuration error. The free roster rotates, so if fallback starts failing, re-check the live list at openrouter.ai/models with the free filter.
 
 ## How scoring works
 
@@ -58,9 +59,9 @@ A full debate costs 26 LLM calls at 1 round, 34 at 2 rounds, and 42 at 3 rounds,
 
 No API key is entered in the page, and no key is stored in the browser. The page calls this deployment's own server function (`api/chat.js`), and that function calls the provider with a key from the server environment.
 
-- Providers: Groq is the primary, Google Gemini is the fallback. Both offer free tiers.
-- Defaults: Groq openai/gpt-oss-120b, Gemini gemini-2.0-flash. The model field is editable, so you can use any model the server key can call.
-- Environment variables, set in the hosting dashboard (never in the repo): `GROQ_API_KEY` for Groq, `GEMINI_API_KEY` for Gemini. A provider without its variable returns a clear "not configured" error instead of failing silently. `.env.example` lists the names with blank values.
+- Providers: Groq is the primary. When Groq is rate-limited or errors, the server automatically falls back to free OpenRouter models (see the chain in How a debate works). Google Gemini is the manual fallback via the provider switch, and OpenRouter is also selectable directly. All three offer free tiers.
+- Defaults: Groq openai/gpt-oss-120b, OpenRouter google/gemma-4-31b-it:free, Gemini gemini-2.0-flash. The model field is editable, so you can use any model the server key can call.
+- Environment variables, set in the hosting dashboard (never in the repo): `GROQ_API_KEY` for Groq, `OPENROUTER_API_KEY` for OpenRouter, `GEMINI_API_KEY` for Gemini. A provider without its variable returns a clear "not configured" error instead of failing silently. `.env.example` lists the names with blank values.
 - Your dilemma text goes only to the chosen provider, as part of the debate prompts, via your own server function. Past debates are stored only in your browser. Clearing your browser data removes them.
 - The server function is same-origin only: it sends no CORS headers, so other websites cannot call it from a browser. It also caps prompt sizes and rate-limits per address. That rate limit is a tripwire, not authentication: this setup is built for a private single-user deployment. Keep the deployment URL private, and turn on your host's deployment protection if it offers one, so only you can open the app.
 
@@ -81,7 +82,7 @@ This repo is meant to be forked and deployed by its owner, not used as a hosted 
 
 1. Fork the repository.
 2. In Vercel, import the fork, set no build command, and set the output directory to the folder containing `index.html` (the repo root). The `api/` folder is picked up automatically as server functions. There is nothing to build and nothing to install.
-3. In the project settings, add the environment variables: `GROQ_API_KEY`, and `GEMINI_API_KEY` if you want the fallback.
+3. In the project settings, add the environment variables: `GROQ_API_KEY`, `OPENROUTER_API_KEY` if you want the automatic free fallback, and `GEMINI_API_KEY` if you want the manual fallback.
 4. Redeploy, then open your deployment and run a debate.
 5. Keep your deployment URL private. Do not publish it in the repo, a post, or a README.
 
@@ -100,7 +101,7 @@ This repo is meant to be forked and deployed by its owner, not used as a hosted 
 node tests/harness.js
 ```
 
-The harness drives the debate state machine with canned provider responses and asserts scoring, verdicts, overrides, dissent, ratification, pillar fixes, top reasons, quick and consult modes, brain fields, exports, and input limits: 76 checks, all passing. It is not loaded by the app, and the production app ships no mock mode.
+The harness drives the debate state machine with canned provider responses and asserts scoring, verdicts, overrides, dissent, ratification, pillar fixes, top reasons, quick and consult modes, brain fields, exports, and input limits: 103 checks, all passing. It is not loaded by the app, and the production app ships no mock mode.
 
 ## Credit
 

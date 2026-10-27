@@ -56,6 +56,7 @@
       <label>Provider
         <select id="d-provider">
           <option value="groq" selected>Groq</option>
+          <option value="openrouter">OpenRouter</option>
           <option value="gemini">Google Gemini</option>
         </select>
       </label>
@@ -64,6 +65,7 @@
       </label>
     </div>
     <p class="muted">Full runs the whole council: brief, openings, fault lines, debate, draft resolution, vote, verdict. Quick skips debate rounds and the draft stage. Consult asks one seat a single question, with no scoring and no saved session.</p>
+    <p class="muted">If Groq hits its rate limit, the server instantly tries free OpenRouter models instead, with no extra click. Each transcript step shows a small badge naming which provider and model served it.</p>
     <div id="consult-seat-row" class="hidden">
       <label>Consult seat
         <select id="d-consult-seat"></select>
