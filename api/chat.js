@@ -1,20 +1,41 @@
 "use strict";
 
 /* Boardroom server function: POST /api/chat.
-   The page never holds an API key. It calls this function on its own
-   deployment, and this function calls the chosen provider with a key
-   that lives only in the server environment. No key appears in the
-   repo, the page, the browser's storage, or any request the browser
-   makes to a third party.
-   No request or response body is ever logged here. */
+   Keys live only in the server environment (GROQ_API_KEY,
+   OPENROUTER_API_KEY, GEMINI_API_KEY). No key appears in the repo,
+   the page, the browser's storage, or any request the browser makes
+   to a third party.
+   No request or response body is ever logged here.
+   When Groq is rate-limited or errors, the function automatically
+   tries free OpenRouter models (OPENROUTER_FREE_CHAIN below) in one
+   call with OpenRouter's models array. The chain lists free models
+   only, so the function never spends money on its own. Each success
+   response names the provider and model that served it, so a
+   fallback is visible, never silent. No HTTP-Referer or title header
+   is sent to OpenRouter, so nothing about this deployment leaks to a
+   third party through request headers. */
 
 var MAX_MODEL = 200;
 var MAX_SYSTEM = 8000;
 var MAX_USER = 12000;
 var MAX_PROVIDER_BODY = 400;
-var PROVIDER_TIMEOUT_MS = 60000;
+var ATTEMPT_TIMEOUT_MS = 25000;
+var FUNCTION_DEADLINE_MS = 55000;
 var RATE_WINDOW_MS = 10 * 60 * 1000;
 var RATE_MAX = 120;
+
+/* Free-only fallback chain, verified against OpenRouter's live model
+   catalog at build time. Every id ends in :free. The free roster
+   rotates, so if fallback starts failing, re-check the live list at
+   openrouter.ai/models with the free filter before assuming an
+   outage. Keep in sync with js/providers.js; the harness asserts the
+   two lists match. */
+var OPENROUTER_FREE_CHAIN = [
+  "google/gemma-4-31b-it:free",
+  "google/gemma-4-26b-a4b-it:free",
+  "dots-studio/dots-3-note-preview:free",
+  "nvidia/nemotron-3-ultra-550b-a55b:free"
+];
 
 /* Per-instance tripwire only: serverless instances do not share this
    map, so it cannot stop a determined caller. The real protection for
@@ -60,6 +81,22 @@ function isUsableString(value, max) {
 
 function providerError(status, bodyText) {
   return { ok: false, status: status, body: (bodyText || "").slice(0, MAX_PROVIDER_BODY) };
+}
+
+/* Models array for an OpenRouter call. A requested free model goes
+   first, then the rest of the free chain. A requested paid model is
+   sent alone: the chain never adds a paid model, and a paid choice
+   stays the user's explicit choice. */
+function openRouterModelsFor(requested) {
+  if (typeof requested === "string" && requested && /:free$/.test(requested)) {
+    var out = [requested];
+    OPENROUTER_FREE_CHAIN.forEach(function (m) {
+      if (out.indexOf(m) === -1) { out.push(m); }
+    });
+    return out;
+  }
+  if (typeof requested === "string" && requested) { return [requested]; }
+  return OPENROUTER_FREE_CHAIN.slice();
 }
 
 async function callGroq(key, model, system, user, signal) {
@@ -124,6 +161,42 @@ async function callGemini(key, model, system, user, signal) {
   return { ok: true, text: text };
 }
 
+/* One OpenRouter call carrying the whole models array. OpenRouter
+   walks the array in order on any error (rate limit, downtime,
+   moderation, context length) and reports the model that actually
+   served the request in the response model field. Only the
+   Authorization and Content-Type headers are sent. */
+async function callOpenRouter(key, models, system, user, signal) {
+  var resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer " + key
+    },
+    body: JSON.stringify({
+      model: models[0],
+      models: models,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user }
+      ],
+      temperature: 0.7,
+      max_tokens: 2048
+    }),
+    signal: signal
+  });
+  if (!resp.ok) {
+    return providerError(resp.status, await resp.text());
+  }
+  var data = await resp.json();
+  var content = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+  if (typeof content !== "string" || content.length === 0) {
+    return { ok: false, status: 200, body: "" };
+  }
+  var served = (data && typeof data.model === "string" && data.model) ? data.model : models[0];
+  return { ok: true, text: content, servedModel: served };
+}
+
 module.exports = async function handler(req, res) {
   if (req.method !== "POST") {
     fail(res, 405, "method_not_allowed", "Only POST is allowed.");
@@ -142,8 +215,8 @@ module.exports = async function handler(req, res) {
     fail(res, 400, "bad_request", "Request body must be a JSON object.");
     return;
   }
-  if (body.provider !== "groq" && body.provider !== "gemini") {
-    fail(res, 400, "bad_request", "Provider must be groq or gemini.");
+  if (body.provider !== "groq" && body.provider !== "gemini" && body.provider !== "openrouter") {
+    fail(res, 400, "bad_request", "Provider must be groq, gemini, or openrouter.");
     return;
   }
   if (!isUsableString(body.model, MAX_MODEL)) {
@@ -159,35 +232,158 @@ module.exports = async function handler(req, res) {
     fail(res, 429, "proxy_rate_limit", "Too many requests from this address. Wait a minute and retry.");
     return;
   }
-  var key = body.provider === "groq" ? process.env.GROQ_API_KEY : process.env.GEMINI_API_KEY;
-  if (!key) {
-    fail(res, 500, "not_configured", "No server key is configured for this provider.");
-    return;
-  }
-  var controller = new AbortController();
-  var timer = setTimeout(function () { controller.abort(); }, PROVIDER_TIMEOUT_MS);
-  var result;
-  try {
-    result = body.provider === "groq"
-      ? await callGroq(key, body.model, body.system, body.user, controller.signal)
-      : await callGemini(key, body.model, body.system, body.user, controller.signal);
-  } catch (err) {
-    clearTimeout(timer);
-    if (err && err.name === "AbortError") {
+
+  /* Every attempt runs under the function deadline, so the Groq
+     attempt plus the OpenRouter attempt always finish inside the
+     function limit. A slow or hanging attempt is aborted, never
+     allowed to eat the whole budget. A single attempt with no second
+     leg behind it (Gemini, OpenRouter direct, or Groq with no
+     OpenRouter key) uses the full deadline, so its behavior is
+     unchanged from before the fallback existed. */
+  var deadline = Date.now() + FUNCTION_DEADLINE_MS;
+  var runAttempt = async function (fn, capMs) {
+    var remaining = deadline - Date.now();
+    if (remaining < 5000) {
+      return { ok: false, status: 0, body: "deadline", deadline: true };
+    }
+    var cap = (typeof capMs === "number" && capMs > 0) ? capMs : FUNCTION_DEADLINE_MS;
+    var ms = Math.min(cap, remaining);
+    var controller = new AbortController();
+    var timer = setTimeout(function () { controller.abort(); }, ms);
+    try {
+      var result = await fn(controller.signal);
+      clearTimeout(timer);
+      return result;
+    } catch (err) {
+      clearTimeout(timer);
+      if (err && err.name === "AbortError") {
+        return { ok: false, status: 0, body: "timeout", timeout: true };
+      }
+      return { ok: false, status: 0, body: "unreachable", unreachable: true };
+    }
+  };
+
+  /* Gemini: single attempt, unchanged behavior. */
+  if (body.provider === "gemini") {
+    var geminiKey = process.env.GEMINI_API_KEY;
+    if (!geminiKey) {
+      fail(res, 500, "not_configured", "No server key is configured for this provider.");
+      return;
+    }
+    var geminiResult = await runAttempt(function (signal) {
+      return callGemini(geminiKey, body.model, body.system, body.user, signal);
+    });
+    if (geminiResult.ok) {
+      send(res, 200, { ok: true, text: geminiResult.text, servedBy: { provider: "gemini", model: body.model } });
+      return;
+    }
+    if (geminiResult.timeout) {
       fail(res, 504, "timeout", "The provider took too long to respond.");
       return;
     }
-    fail(res, 502, "provider_unreachable", "The provider could not be reached.");
+    if (geminiResult.unreachable || geminiResult.deadline) {
+      fail(res, 502, "provider_unreachable", "The provider could not be reached.");
+      return;
+    }
+    send(res, 200, { ok: false, status: geminiResult.status, body: geminiResult.body });
     return;
   }
-  clearTimeout(timer);
-  if (!result.ok) {
-    send(res, 200, { ok: false, status: result.status, body: result.body });
+
+  /* OpenRouter direct: one call carrying the models array. */
+  if (body.provider === "openrouter") {
+    var openRouterKey = process.env.OPENROUTER_API_KEY;
+    if (!openRouterKey) {
+      fail(res, 500, "not_configured", "No server key is configured for this provider.");
+      return;
+    }
+    var directModels = openRouterModelsFor(body.model);
+    var directResult = await runAttempt(function (signal) {
+      return callOpenRouter(openRouterKey, directModels, body.system, body.user, signal);
+    });
+    if (directResult.ok) {
+      send(res, 200, { ok: true, text: directResult.text, servedBy: { provider: "openrouter", model: directResult.servedModel } });
+      return;
+    }
+    if (directResult.timeout) {
+      fail(res, 504, "timeout", "The provider took too long to respond.");
+      return;
+    }
+    if (directResult.unreachable || directResult.deadline) {
+      fail(res, 502, "provider_unreachable", "The provider could not be reached.");
+      return;
+    }
+    send(res, 200, { ok: false, status: directResult.status, body: directResult.body });
     return;
   }
-  send(res, 200, { ok: true, text: result.text });
+
+  /* Groq primary with automatic OpenRouter free fallback. The
+     fallback triggers only on capacity or availability failures
+     (rate limit, server error, timeout, unreachable). A rejected key
+     or a bad model name fails fast: switching providers cannot fix
+     a configuration error, and the error must say so plainly. */
+  var groqKey = process.env.GROQ_API_KEY;
+  if (!groqKey) {
+    fail(res, 500, "not_configured", "No server key is configured for this provider.");
+    return;
+  }
+  /* The fallback is completely inert when its key is unset: the Groq
+     attempt keeps the full deadline, exactly as before, and no
+     OpenRouter call is ever made. Only when the key exists is the
+     Groq attempt capped at 25 seconds, leaving room for the fallback
+     leg inside the same deadline. */
+  var fallbackKey = process.env.OPENROUTER_API_KEY;
+  var primary = await runAttempt(function (signal) {
+    return callGroq(groqKey, body.model, body.system, body.user, signal);
+  }, fallbackKey ? ATTEMPT_TIMEOUT_MS : FUNCTION_DEADLINE_MS);
+  if (primary.ok) {
+    send(res, 200, { ok: true, text: primary.text, servedBy: { provider: "groq", model: body.model } });
+    return;
+  }
+  if (primary.status === 401 || primary.status === 403 || primary.status === 400 || primary.status === 404) {
+    send(res, 200, { ok: false, status: primary.status, body: primary.body });
+    return;
+  }
+  if (!fallbackKey) {
+    if (primary.timeout) {
+      fail(res, 504, "timeout", "The provider took too long to respond.");
+      return;
+    }
+    if (primary.unreachable || primary.deadline) {
+      fail(res, 502, "provider_unreachable", "The provider could not be reached.");
+      return;
+    }
+    send(res, 200, { ok: false, status: primary.status, body: primary.body, fallbackSkipped: "no_openrouter_key" });
+    return;
+  }
+  var fallback = await runAttempt(function (signal) {
+    return callOpenRouter(fallbackKey, OPENROUTER_FREE_CHAIN.slice(), body.system, body.user, signal);
+  }, ATTEMPT_TIMEOUT_MS);
+  if (fallback.ok) {
+    send(res, 200, { ok: true, text: fallback.text, servedBy: { provider: "openrouter", model: fallback.servedModel } });
+    return;
+  }
+  /* Chain exhausted: report the primary failure, flagged, so the page
+     can say the free fallbacks ran out too. When the primary had no
+     HTTP status (timeout or unreachable), report the fallback
+     outcome instead, still flagged. */
+  if (primary.timeout || primary.unreachable || primary.deadline) {
+    if (fallback.timeout) {
+      fail(res, 504, "timeout", "The provider took too long to respond.");
+      return;
+    }
+    if (fallback.unreachable || fallback.deadline) {
+      fail(res, 502, "provider_unreachable", "The provider could not be reached.");
+      return;
+    }
+    send(res, 200, { ok: false, status: fallback.status, body: fallback.body, fallbackExhausted: true });
+    return;
+  }
+  send(res, 200, { ok: false, status: primary.status, body: primary.body, fallbackExhausted: true });
 };
 
-/* A full debate step can take well over the 10 second default on a
-   free deployment, so allow up to 60 seconds per function call. */
+/* When a fallback leg follows, the Groq attempt is capped at 25
+   seconds inside a 55 second function deadline, under the 60 second
+   function limit. A single attempt with no fallback uses the full
+   deadline, so Groq behavior without an OpenRouter key is unchanged. */
 module.exports.config = { maxDuration: 60 };
+module.exports.OPENROUTER_FREE_CHAIN = OPENROUTER_FREE_CHAIN;
