@@ -1,6 +1,7 @@
-/* Boardroom UI rendering.
+/* Boardroom UI rendering: the conversation room.
    Every dynamic string passes through BR.esc before it reaches innerHTML.
-   No user text and no model text is ever inserted unescaped. */
+   No user text and no model text is ever inserted unescaped.
+   Portraits come from a fixed allowlist of seat ids, never from user input. */
 
 var BR = (function () {
   if (typeof window !== "undefined") { window.BR = window.BR || {}; return window.BR; }
@@ -30,81 +31,182 @@ BR.latestCardFor = function (state, advisorId) {
   return null;
 };
 
-BR.renderBoard = function (container, state, speakingId) {
-  var html = "";
+/* Portrait files shipped with the app, keyed by seat id. Any other id
+   (including the custom advisor) falls back to initials. */
+BR.avatarPathFor = function (advisorId) {
+  var known = ["operator", "offer", "investor", "marketer", "philosopher", "founder", "saas", "eos"];
+  if (known.indexOf(advisorId) === -1) { return null; }
+  return "assets/avatars/" + advisorId + ".png";
+};
+
+/* Round thumb: initials underneath, portrait on top. If the portrait
+   fails to load, the onerror hides it and the initials show instead. */
+BR.avatarThumb = function (a, cls) {
+  var path = BR.avatarPathFor(a.id);
+  var inner = '<span class="thumb-initials" style="background:' + BR.esc(a.color) + '">' + BR.esc(a.initials) + '</span>';
+  if (path) {
+    inner += '<img class="thumb-img" src="' + BR.esc(path) + '" alt="" onerror="this.style.display=\'none\'">';
+  }
+  return '<span class="thumb ' + (cls || "") + '">' + inner + '</span>';
+};
+
+BR.advisorByShort = function (state, short) {
+  var found = null;
+  state.advisors.forEach(function (a) { if (a.short === short) { found = a; } });
+  return found;
+};
+
+/* Room progress: 0 Brief, 1 Openings, 2 Fault lines, 3 Debate, 4 Vote, 5 Verdict. */
+BR.phaseOf = function (state) {
+  if (state.verdict) { return 5; }
+  if (Object.keys(state.final).length > 0) { return 4; }
+  if (state.debateRounds.length > 0) { return 3; }
+  if (state.director && Object.keys(state.opening).length >= state.advisors.length) { return 2; }
+  if (state.director) { return 1; }
+  return 0;
+};
+
+BR.STEPPER_LABELS = ["Brief", "Openings", "Fault lines", "Debate", "Vote", "Verdict"];
+
+BR.renderStepper = function (container, state) {
+  var phase = BR.phaseOf(state);
+  var html = '<nav class="stepper" aria-label="Debate progress">';
+  BR.STEPPER_LABELS.forEach(function (label, i) {
+    var cls = "step";
+    if (i < phase) { cls += " done"; }
+    if (i === phase) { cls += " current"; }
+    if (i > 0) { html += '<span class="step-sep" aria-hidden="true">›</span>'; }
+    html += '<span class="' + cls + '">' + BR.esc(label) + '</span>';
+  });
+  html += '</nav>';
+  container.innerHTML = html;
+};
+
+BR.renderStage = function (container, state, speakingId) {
+  var html = '<div class="stage">';
   state.advisors.forEach(function (a) {
     var found = BR.latestCardFor(state, a.id);
     var card = found ? found.card : null;
     var final = state.final[a.id];
-    var speaking = speakingId === a.id ? " speaking" : "";
-    var weight = state.director && state.director.weights[a.id] ? state.director.weights[a.id].weight : "-";
-    html += '<article class="seat-card' + speaking + '" style="--seat-color:' + BR.esc(a.color) + '">';
-    html += '<div class="seat-head"><span class="avatar" style="background:' + BR.esc(a.color) + '">' + BR.esc(a.initials) + '</span>';
-    html += '<div><div class="seat-name">' + BR.esc(a.short) + '</div>';
-    html += '<div class="seat-role">' + BR.esc(a.role) + '</div></div>';
-    html += '<span class="sim-badge">AI SIMULATION</span></div>';
-    html += '<div class="seat-question">' + BR.esc(a.question) + '</div>';
-    html += '<div class="seat-meta">Weight ' + BR.esc(weight) + ' / 3 &middot; Pillar: ' + BR.esc(a.dimension) + '</div>';
+    var speaking = speakingId === a.id;
+    var cls = "stage-seat";
+    if (speaking) { cls += " speaking"; }
+    else if (speakingId) { cls += " dim"; }
+    html += '<div class="' + cls + '" style="--seat-color:' + BR.esc(a.color) + '">';
+    html += BR.avatarThumb(a, "large");
+    html += '<div class="stage-name">' + BR.esc(a.short) + '</div>';
+    html += '<div class="stage-role">' + BR.esc(a.role) + '</div>';
+    if (speaking) {
+      html += '<div class="thinking" aria-label="Speaking"><span></span><span></span><span></span></div>';
+    }
     if (final) {
-      html += '<div class="seat-vote"><span class="vote-badge">' + BR.esc(final.vote) + '</span>';
-      html += '<span class="vote-score">Support ' + BR.esc(final.finalScore) + '/10</span></div>';
-      html += '<div class="seat-reason">' + BR.esc(final.amendment || final.line) + '</div>';
+      html += '<div class="stage-status"><span class="vote-badge">' + BR.esc(final.vote) + '</span> ' + BR.esc(final.finalScore) + '/10</div>';
     } else if (card) {
-      html += '<div class="seat-vote"><span class="vote-badge ' + BR.voteBadgeClass(card.stance) + '">' + BR.esc(card.stance) + '</span>';
-      html += '<span class="vote-score">Option ' + BR.esc(card.recommendedId) + ': ' + BR.esc(card.optionScores[card.recommendedId]) + '/10</span></div>';
-      html += '<div class="seat-reason">' + BR.esc(card.reason) + '</div>';
-      html += '<div class="seat-meta">Pillar ' + BR.esc(card.pillarScore) + '/10 &middot; Confidence ' + BR.esc(card.confidence) + '/5 &middot; Ruin: ' + BR.esc(card.ruinRisk) + ' &middot; Door: ' + BR.esc(card.door) + '</div>';
+      html += '<div class="stage-status"><span class="vote-badge ' + BR.voteBadgeClass(card.stance) + '">' + BR.esc(card.stance) + '</span> Option ' + BR.esc(card.recommendedId) + ': ' + BR.esc(card.optionScores[card.recommendedId]) + '/10</div>';
     } else {
-      html += '<div class="seat-vote"><span class="vote-badge waiting">Waiting</span></div>';
-      html += '<div class="seat-reason">No vote yet in this debate.</div>';
+      html += '<div class="stage-status"><span class="vote-badge waiting">Waiting</span></div>';
     }
-    if (a.id === "custom") {
-      html += '<div class="seat-meta">Custom advisor, defined by you.</div>';
-    } else {
-      html += '<div class="seat-meta sim-note">Inspired by public frameworks. Not the real person. No affiliation or endorsement.</div>';
-    }
-    html += '</article>';
+    html += '</div>';
   });
+  html += '</div>';
+  html += '<p class="stage-note muted sim-note">Seats are AI simulations inspired by public frameworks. They are not the real people and do not speak for them.</p>';
   container.innerHTML = html;
 };
 
-BR.renderTranscript = function (container, state) {
+BR.renderCruxes = function (container, state) {
+  if (!state.director) {
+    container.innerHTML = '<p class="muted">The Director\'s fault lines appear here after the brief.</p>';
+    return;
+  }
+  var html = '<p class="crux-brief">' + BR.esc(state.director.brief) + '</p>';
+  html += '<ol class="crux-list">';
+  state.director.cruxes.forEach(function (c) {
+    html += '<li><strong>' + BR.esc(c.question) + '</strong>';
+    if (c.sides && c.sides.length > 0) {
+      html += '<span class="crux-sides">' + c.sides.map(function (s) {
+        return BR.esc(s.position || s);
+      }).join(" vs ") + '</span>';
+    }
+    html += '</li>';
+  });
+  html += '</ol>';
+  if (state.director.assumptions && state.director.assumptions.length > 0) {
+    html += '<p class="muted">Assumptions: ' + state.director.assumptions.map(function (a) { return BR.esc(a); }).join("; ") + '</p>';
+  }
+  container.innerHTML = html;
+};
+
+BR.renderTranscript = function (container, state, speakingId) {
   if (!state || state.transcript.length === 0) {
-    container.innerHTML = '<p class="muted">No transcript yet. Start a debate and every step will appear here live.</p>';
+    container.innerHTML = '<p class="muted">No conversation yet. Start a debate and every step will appear here live.</p>';
     return;
   }
   var html = "";
   state.transcript.forEach(function (t) {
-    html += '<div class="tx-entry"><div class="tx-head"><span class="tx-speaker">' + BR.esc(t.speaker) + '</span>';
-    html += '<span class="tx-kind">' + BR.esc(t.title) + '</span></div>';
-    html += '<div class="tx-body">' + BR.esc(t.body) + '</div></div>';
+    if (t.kind === "director" || t.speaker === "Director") {
+      html += '<div class="tx-entry tx-director"><div class="tx-head"><span class="tx-speaker">Director</span>';
+      html += '<span class="tx-kind">' + BR.esc(t.title) + '</span></div>';
+      html += '<div class="tx-body">' + BR.esc(t.body) + '</div></div>';
+    } else {
+      var adv = BR.advisorByShort(state, t.speaker);
+      html += '<div class="tx-entry tx-advisor">';
+      if (adv) { html += BR.avatarThumb(adv, ""); }
+      html += '<div class="tx-content"><div class="tx-head"><span class="tx-speaker">' + BR.esc(t.speaker) + '</span>';
+      html += '<span class="tx-kind">' + BR.esc(t.title) + '</span></div>';
+      html += '<div class="tx-body">' + BR.esc(t.body) + '</div></div></div>';
+    }
   });
+  if (speakingId && !state.completed) {
+    var current = BR.advisorById(state, speakingId);
+    if (current) {
+      html += '<div class="tx-entry tx-thinking">' + BR.avatarThumb(current, "") + '<span><strong>' + BR.esc(current.short) + '</strong> is thinking<span class="thinking"><span></span><span></span><span></span></span></span></div>';
+    }
+  }
   container.innerHTML = html;
 };
 
-BR.renderScorecard = function (container, state) {
-  if (!state.verdict) {
-    container.innerHTML = '<p class="muted">The scorecard appears here after the final vote.</p>';
+/* Key points side panel: live one-liners per seat during the debate,
+   the full scorecard table and math lines after the verdict. */
+BR.renderKeyPoints = function (container, state) {
+  if (state.verdict) {
+    var v = state.verdict;
+    var html = '<table class="score-table"><thead><tr><th>Seat</th><th>Weight</th><th>Final stance</th><th>Pillar</th><th>Line</th></tr></thead><tbody>';
+    state.advisors.forEach(function (a) {
+      var w = state.director.weights[a.id] ? state.director.weights[a.id].weight : 1;
+      var latest = BR.latestCardFor(state, a.id);
+      var f = state.final[a.id];
+      html += '<tr><td>' + BR.esc(a.short) + '</td><td>' + BR.esc(w) + '</td>';
+      html += '<td>' + BR.esc(latest ? latest.card.stance : "") + '</td>';
+      html += '<td>' + BR.esc(v.pillarScores[a.id]) + '/10</td>';
+      html += '<td>' + BR.esc(f ? f.line : "") + '</td></tr>';
+    });
+    html += '</tbody></table>';
+    html += '<div class="math-lines">';
+    state.options.forEach(function (o) {
+      html += '<div>' + BR.esc(v.optionScores[o.id].math) + '</div>';
+    });
+    html += '</div>';
+    container.innerHTML = html;
     return;
   }
-  var v = state.verdict;
-  var html = '<table class="score-table"><thead><tr><th>Seat</th><th>Weight</th><th>Final stance</th><th>Pillar</th><th>Line</th></tr></thead><tbody>';
+  var items = "";
   state.advisors.forEach(function (a) {
-    var w = state.director.weights[a.id] ? state.director.weights[a.id].weight : 1;
-    var latest = BR.latestCardFor(state, a.id);
-    var f = state.final[a.id];
-    html += '<tr><td>' + BR.esc(a.short) + '</td><td>' + BR.esc(w) + '</td>';
-    html += '<td>' + BR.esc(latest ? latest.card.stance : "") + '</td>';
-    html += '<td>' + BR.esc(v.pillarScores[a.id]) + '/10</td>';
-    html += '<td>' + BR.esc(f ? f.line : "") + '</td></tr>';
+    var found = BR.latestCardFor(state, a.id);
+    var card = found ? found.card : null;
+    var weight = state.director && state.director.weights[a.id] ? state.director.weights[a.id].weight : "-";
+    items += '<div class="kp-item">' + BR.avatarThumb(a, "") + '<div class="kp-content">';
+    items += '<div class="kp-head"><span class="kp-name">' + BR.esc(a.short) + '</span>';
+    items += '<span class="kp-weight">Weight ' + BR.esc(weight) + ' / 3</span></div>';
+    if (card) {
+      items += '<div class="kp-line"><span class="vote-badge ' + BR.voteBadgeClass(card.stance) + '">' + BR.esc(card.stance) + '</span> Option ' + BR.esc(card.recommendedId) + ': ' + BR.esc(card.optionScores[card.recommendedId]) + '/10</div>';
+      items += '<div class="kp-meta">Pillar ' + BR.esc(card.pillarScore) + '/10 &middot; Confidence ' + BR.esc(card.confidence) + '/5 &middot; Ruin: ' + BR.esc(card.ruinRisk) + ' &middot; Door: ' + BR.esc(card.door) + '</div>';
+      items += '<div class="kp-reason">' + BR.esc(card.reason) + '</div>';
+    } else {
+      items += '<div class="kp-line"><span class="vote-badge waiting">Waiting</span></div>';
+    }
+    items += '</div></div>';
   });
-  html += '</tbody></table>';
-  html += '<div class="math-lines">';
-  state.options.forEach(function (o) {
-    html += '<div>' + BR.esc(v.optionScores[o.id].math) + '</div>';
-  });
-  html += '</div>';
-  container.innerHTML = html;
+  container.innerHTML = items;
 };
 
 BR.renderVerdict = function (container, state) {

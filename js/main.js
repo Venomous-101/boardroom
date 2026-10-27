@@ -1,6 +1,7 @@
 /* Boardroom main wiring.
-   Keys live only in localStorage. They are never displayed, never logged,
-   and never sent anywhere except the chosen provider's API host. */
+   The page holds no API key. Calls go through this deployment's own
+   server function (/api/chat), which holds the key server-side.
+   Past debates live only in this browser's localStorage. */
 
 var BR = (function () {
   if (typeof window !== "undefined") { window.BR = window.BR || {}; return window.BR; }
@@ -8,29 +9,6 @@ var BR = (function () {
 })();
 
 BR.HISTORY_KEY = "boardroom.sessions.v1";
-BR.KEY_GROQ = "boardroom.groqKey";
-BR.KEY_GEMINI = "boardroom.geminiKey";
-
-BR.getKey = function (providerId) {
-  try {
-    return window.localStorage.getItem(providerId === "gemini" ? BR.KEY_GEMINI : BR.KEY_GROQ) || "";
-  } catch (e) {
-    return "";
-  }
-};
-
-BR.setKey = function (providerId, value) {
-  try {
-    window.localStorage.setItem(providerId === "gemini" ? BR.KEY_GEMINI : BR.KEY_GROQ, value);
-  } catch (e) { /* storage unavailable: keys stay in memory only for this session */ }
-};
-
-BR.clearKeys = function () {
-  try {
-    window.localStorage.removeItem(BR.KEY_GROQ);
-    window.localStorage.removeItem(BR.KEY_GEMINI);
-  } catch (e) { /* ignore */ }
-};
 
 BR.loadHistory = function () {
   try {
@@ -61,31 +39,26 @@ document.addEventListener("DOMContentLoaded", function () {
   var speakingId = null;
 
   var els = {
-    keyGroq: $("key-groq"), keyGemini: $("key-gemini"),
-    keyStatus: $("key-status"), saveKeys: $("save-keys"), clearKeys: $("clear-keys"),
     title: $("d-title"), context: $("d-context"), options: $("d-options"),
     rounds: $("d-rounds"), focus: $("d-focus"), provider: $("d-provider"), model: $("d-model"),
     customName: $("d-custom-name"), customView: $("d-custom-view"),
     start: $("start-debate"), newDebate: $("new-debate"),
     status: $("status"), errorBox: $("error-box"), errorText: $("error-text"),
     retryStep: $("retry-step"), switchProvider: $("switch-provider"),
-    board: $("board"), transcript: $("transcript"), scorecard: $("scorecard"),
+    stepper: $("stepper"), stage: $("stage"), cruxes: $("cruxes"),
+    transcript: $("transcript"), keypoints: $("keypoints"),
     verdict: $("verdict"), history: $("history"),
     downloadMd: $("download-md"), copyTx: $("copy-tx"), printBtn: $("print-btn"),
     setupForm: $("setup-form"), debateView: $("debate-view")
   };
 
-  function refreshKeyStatus() {
-    var g = BR.getKey("groq") ? "saved" : "not saved";
-    var m = BR.getKey("gemini") ? "saved" : "not saved";
-    els.keyStatus.textContent = "Groq key: " + g + ". Gemini key: " + m + ". Keys are stored only in this browser.";
-  }
-
   function renderAll() {
     if (!currentState) { return; }
-    BR.renderBoard(els.board, currentState, speakingId);
-    BR.renderTranscript(els.transcript, currentState);
-    BR.renderScorecard(els.scorecard, currentState);
+    BR.renderStepper(els.stepper, currentState);
+    BR.renderStage(els.stage, currentState, speakingId);
+    BR.renderCruxes(els.cruxes, currentState);
+    BR.renderTranscript(els.transcript, currentState, speakingId);
+    BR.renderKeyPoints(els.keypoints, currentState);
     BR.renderVerdict(els.verdict, currentState);
   }
 
@@ -97,12 +70,8 @@ document.addEventListener("DOMContentLoaded", function () {
     els.errorText.textContent = "Step failed: " + failed.label + ". Cause: " + failed.error.message;
     els.errorBox.classList.remove("hidden");
     var other = currentState.provider === "groq" ? "gemini" : "groq";
-    if (BR.getKey(other)) {
-      els.switchProvider.classList.remove("hidden");
-      els.switchProvider.textContent = "Retry this step with " + BR.PROVIDERS[other].label + " instead";
-    } else {
-      els.switchProvider.classList.add("hidden");
-    }
+    els.switchProvider.classList.remove("hidden");
+    els.switchProvider.textContent = "Retry this step with " + BR.PROVIDERS[other].label + " instead";
   }
 
   function hideError() {
@@ -111,11 +80,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   function callFn(state, step) {
     var providerId = state.provider;
-    var key = BR.getKey(providerId);
     var model = state.model || BR.PROVIDERS[providerId].defaultModel;
-    if (!key) {
-      return Promise.resolve({ ok: false, error: { code: "no_key", message: "No API key saved for " + BR.PROVIDERS[providerId].label + ". Add your key first." } });
-    }
     var system = "";
     var user = "";
     if (step.key === "director") {
@@ -144,13 +109,13 @@ document.addEventListener("DOMContentLoaded", function () {
       system = BR.personaPromptFor(adv3);
       user = BR.finalUser(state, adv3);
     }
-    return BR.callLLM(providerId, key, model, system, user);
+    return BR.callLLM(providerId, model, system, user);
   }
 
   function onProgress(step, attempt) {
     speakingId = step.advisorId || null;
     setStatus("Working: " + step.label + (attempt > 1 ? " (attempt " + attempt + ")" : "") + ".");
-    if (currentState) { BR.renderBoard(els.board, currentState, speakingId); }
+    if (currentState) { renderAll(); }
   }
 
   function onStepDone() {
@@ -198,23 +163,6 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   }
 
-  els.saveKeys.addEventListener("click", function () {
-    var g = els.keyGroq.value.trim();
-    var m = els.keyGemini.value.trim();
-    if (g) { BR.setKey("groq", g); }
-    if (m) { BR.setKey("gemini", m); }
-    els.keyGroq.value = "";
-    els.keyGemini.value = "";
-    refreshKeyStatus();
-    setStatus("Keys saved in this browser only.");
-  });
-
-  els.clearKeys.addEventListener("click", function () {
-    BR.clearKeys();
-    refreshKeyStatus();
-    setStatus("Keys cleared from this browser.");
-  });
-
   els.provider.addEventListener("change", function () {
     els.model.value = BR.PROVIDERS[els.provider.value].defaultModel;
   });
@@ -226,10 +174,6 @@ document.addEventListener("DOMContentLoaded", function () {
     if (!title) { setStatus("Enter a decision title first."); return; }
     if (!context) { setStatus("Enter context for the decision first."); return; }
     var providerId = els.provider.value;
-    if (!BR.getKey(providerId)) {
-      setStatus("Add your " + BR.PROVIDERS[providerId].label + " API key first. Keys are stored only in this browser.");
-      return;
-    }
     var optionLines = els.options.value.split("\n").map(function (l) { return l.trim(); }).filter(Boolean);
     var customName = els.customName.value.trim();
     var customView = els.customView.value.trim();
@@ -274,7 +218,6 @@ document.addEventListener("DOMContentLoaded", function () {
   els.switchProvider.addEventListener("click", function () {
     if (running || !currentState) { return; }
     var other = currentState.provider === "groq" ? "gemini" : "groq";
-    if (!BR.getKey(other)) { return; }
     currentState.providerSwitches.push({ from: currentState.provider, to: other, at: currentState.failedStep ? currentState.failedStep.key : "" });
     currentState.provider = other;
     currentState.model = BR.PROVIDERS[other].defaultModel;
@@ -320,7 +263,6 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 
   els.model.value = BR.PROVIDERS[els.provider.value].defaultModel;
-  refreshKeyStatus();
   renderHistoryList();
-  setStatus("Ready. Add your key, describe a decision, and start the board.");
+  setStatus("Ready. Describe a decision, and start the board.");
 });
