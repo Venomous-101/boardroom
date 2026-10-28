@@ -32,7 +32,6 @@ var RATE_MAX = 120;
    two lists match. */
 var OPENROUTER_FREE_CHAIN = [
   "google/gemma-4-31b-it:free",
-  "google/gemma-4-26b-a4b-it:free",
   "dots-studio/dots-3-note-preview:free",
   "nvidia/nemotron-3-ultra-550b-a55b:free"
 ];
@@ -93,7 +92,10 @@ function openRouterModelsFor(requested) {
     OPENROUTER_FREE_CHAIN.forEach(function (m) {
       if (out.indexOf(m) === -1) { out.push(m); }
     });
-    return out;
+    /* OpenRouter rejects a models array longer than 3 items with HTTP
+       400, so cap every models array at 3, even when a requested free
+       model is prepended to the chain. */
+    return out.slice(0, 3);
   }
   if (typeof requested === "string" && requested) { return [requested]; }
   return OPENROUTER_FREE_CHAIN.slice();
