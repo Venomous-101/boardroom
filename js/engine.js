@@ -529,7 +529,10 @@ BR.computeVerdict = function (state) {
     });
     return best;
   };
-  minority = pickStrongest(dissentList) || pickStrongest(otherwiseList);
+  /* Minority means true dissent only. Endorsers who preferred another
+     option are listed separately under preferredOtherwise, so a verdict
+     with 0 dissent can never render a false "dissented" line. */
+  minority = pickStrongest(dissentList);
   var verdictSoFar = {
     recommendedId: recommendedId,
     recommendedScore: recommendedScore,

@@ -19,7 +19,6 @@ var BR = (function () {
    the harness asserts the two lists match. Every id ends in :free. */
 BR.OPENROUTER_FREE_CHAIN = [
   "google/gemma-4-31b-it:free",
-  "google/gemma-4-26b-a4b-it:free",
   "dots-studio/dots-3-note-preview:free",
   "nvidia/nemotron-3-ultra-550b-a55b:free"
 ];
