@@ -165,7 +165,20 @@ BR.callLLM = function (providerId, model, systemPrompt, userPrompt) {
         }
         var mapped = BR.mapProviderError(provider.id, data.status, data.body);
         if (data.fallbackExhausted) {
-          mapped.message += " The OpenRouter free fallbacks were also exhausted.";
+          /* Honest fallback failure: name the fallback status, give
+             the truncated fallback detail, and explain the free
+             limits, so a daily cap is not mistaken for a code bug.
+             A daily OpenRouter cap cannot be fixed by retrying the
+             same step today, and this message says so plainly. */
+          var fallbackNote = " The OpenRouter free fallbacks also failed";
+          if (typeof data.fallbackStatus === "number") {
+            fallbackNote += " (HTTP " + data.fallbackStatus + ")";
+          }
+          fallbackNote += ". OpenRouter free tier allows 20 requests per minute and 50 per day, so if the daily cap is hit, retrying today will not help; wait for the cap to reset or switch provider.";
+          if (typeof data.fallbackBody === "string" && data.fallbackBody) {
+            fallbackNote += " Fallback detail: " + data.fallbackBody.slice(0, 200);
+          }
+          mapped.message += fallbackNote;
         }
         if (data.fallbackSkipped === "no_openrouter_key") {
           mapped.message += " Add an OpenRouter key to enable automatic free fallback.";

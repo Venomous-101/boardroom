@@ -95,6 +95,7 @@ BR.createDebate = function (input) {
     opening: {},
     debateRounds: [],
     discussion: {},
+    discussionTargets: {},
     draft: null,
     final: {},
     verdict: null,
@@ -231,6 +232,24 @@ BR.validateDebate = function (obj, optionIds) {
    never changes verdict maths, which still reads the last debate
    round's cards. That keeps the discussion honest deliberation: seats
    answer each other's actual points without quietly rescoring. */
+/* A concession is reasoned only when it is not a bare "nothing".
+   "Nothing conceded: the attack fails because ..." passes, because
+   it carries a reason. "Nothing.", "None", and "No concession" fail,
+   and so does any concession shorter than 15 characters. A leading
+   "nothing" or "none" must be followed by at least 20 characters of
+   reason, including a "because" or a colon explanation. */
+BR.concessionIsReasoned = function (value) {
+  var t = (value === null || value === undefined) ? "" : String(value).trim();
+  if (t.length < 15) { return false; }
+  var low = t.toLowerCase();
+  if (/^(nothing|none|no concession|n\/a)\.?$/.test(low)) { return false; }
+  if (/^(nothing|none)\b/.test(low)) {
+    var rest = t.replace(/^(nothing|none)\b[:\s]*/i, "");
+    return rest.length >= 20 && (rest.toLowerCase().indexOf("because") !== -1 || rest.indexOf(":") !== -1 || rest.length >= 40);
+  }
+  return true;
+};
+
 BR.validateDiscussion = function (obj) {
   if (!obj || typeof obj !== "object") { return null; }
   var agree = (obj.agree === "agree" || obj.agree === "disagree") ? obj.agree : null;
@@ -238,19 +257,26 @@ BR.validateDiscussion = function (obj) {
   if (typeof obj.answerTo !== "string" || !obj.answerTo.trim()) { return null; }
   if (typeof obj.pointAnswered !== "string" || !obj.pointAnswered.trim()) { return null; }
   if (typeof obj.reply !== "string" || !obj.reply.trim()) { return null; }
+  /* Steelman is now a required, labelled field, not an optional
+     quality of the reply. A discussion card without a steelman of
+     at least 20 characters fails validation and is retried, so the
+     live room can never again show discussion cards with no
+     labelled steelman. */
+  if (typeof obj.steelman !== "string" || obj.steelman.trim().length < 20) { return null; }
   /* Adversarial fields: a discussion reply is only complete when it
-     names the weak premise it attacks, states what it concedes (or
-     that it concedes nothing and why), prices being wrong, and names
-     the evidence that would settle the point. A reply that only
-     agrees politely fails validation and is retried. */
+     names the weak premise it attacks, states a reasoned concession,
+     prices being wrong, and names the evidence that would settle
+     the point. A reply that only agrees politely, or that concedes
+     a bare "nothing", fails validation and is retried. */
   if (typeof obj.weakPoint !== "string" || !obj.weakPoint.trim()) { return null; }
-  if (typeof obj.concede !== "string" || !obj.concede.trim()) { return null; }
+  if (typeof obj.concede !== "string" || !BR.concessionIsReasoned(obj.concede)) { return null; }
   if (typeof obj.costOfBeingWrong !== "string" || !obj.costOfBeingWrong.trim()) { return null; }
   if (typeof obj.evidenceDemanded !== "string" || !obj.evidenceDemanded.trim()) { return null; }
   return {
     answerTo: BR.clampText(obj.answerTo.trim(), 60),
     agree: agree,
     pointAnswered: BR.clampText(obj.pointAnswered.trim(), 300),
+    steelman: BR.clampText(obj.steelman.trim(), 300),
     weakPoint: BR.clampText(obj.weakPoint.trim(), 300),
     reply: BR.clampText(obj.reply.trim(), 600),
     concede: BR.clampText(obj.concede.trim(), 300),
@@ -265,7 +291,8 @@ BR.validateDiscussion = function (obj) {
    highest pillar score among those. Falls back to the highest pillar
    other seat, then to the next seat in order, so every seat always has
    a real target and never answers itself. */
-BR.strongestDiscussionTarget = function (state, advisorId) {
+BR.strongestDiscussionTarget = function (state, advisorId, excludedIds) {
+  var excluded = excludedIds || [];
   var latest = state.debateRounds.length > 0
     ? state.debateRounds[state.debateRounds.length - 1].cards
     : state.opening;
@@ -276,6 +303,7 @@ BR.strongestDiscussionTarget = function (state, advisorId) {
   var fallbackPillar = -1;
   state.advisors.forEach(function (a) {
     if (a.id === advisorId) { return; }
+    if (excluded.indexOf(a.id) !== -1) { return; }
     var card = latest ? latest[a.id] : null;
     var pillar = card ? (card.pillarScore || 0) : 0;
     if (pillar > fallbackPillar) { fallbackPillar = pillar; fallback = a; }
@@ -287,12 +315,56 @@ BR.strongestDiscussionTarget = function (state, advisorId) {
   });
   if (best) { return best; }
   if (fallback) { return fallback; }
+  if (excluded.length > 0) { return BR.strongestDiscussionTarget(state, advisorId, []); }
   var idx = -1;
   state.advisors.forEach(function (a, i) { if (a.id === advisorId) { idx = i; } });
   if (idx >= 0 && state.advisors.length > 1) {
     return state.advisors[(idx + 1) % state.advisors.length];
   }
   return null;
+};
+
+/* Assign one discussion target per seat before the discussion round
+   runs, so seats do not all pile onto the same strongest opponent.
+   Seats are assigned in table order. Each seat takes its strongest
+   opposing seat that no earlier seat has already taken; only when
+   every opposing seat is taken does a seat reuse one. When there is
+   only one opposing seat in the whole room, reuse is unavoidable and
+   is recorded honestly, not hidden. The assignment is stored on the
+   state, so a resumed debate keeps the same targets. */
+BR.assignDiscussionTargets = function (state) {
+  var used = [];
+  var assigned = {};
+  /* Targets already answered in a resumed debate stay taken, so a
+     resumed round does not reassign a target another seat already
+     used. AnswerTo holds a short name, mapped back to a seat id. */
+  if (state.discussion) {
+    Object.keys(state.discussion).forEach(function (seatId) {
+      var done = state.discussion[seatId];
+      if (done && done.answerTo) {
+        state.advisors.forEach(function (a) {
+          if (a.short === done.answerTo && used.indexOf(a.id) === -1) { used.push(a.id); }
+        });
+      }
+    });
+  }
+  state.advisors.forEach(function (a) {
+    var target = BR.strongestDiscussionTarget(state, a.id, used);
+    if (target) {
+      assigned[a.id] = target.id;
+      used.push(target.id);
+    }
+  });
+  state.discussionTargets = assigned;
+  return assigned;
+};
+
+BR.discussionTargetFor = function (state, advisorId) {
+  if (state.discussionTargets && state.discussionTargets[advisorId]) {
+    var found = BR.advisorById(state, state.discussionTargets[advisorId]);
+    if (found) { return found; }
+  }
+  return BR.strongestDiscussionTarget(state, advisorId);
 };
 
 BR.validateDraft = function (obj) {
@@ -729,9 +801,10 @@ BR.discussionUser = function (state, advisor, target, targetCard) {
     }
   }
   lines.push(BR.FOCUS_LINES[state.focus] || BR.FOCUS_LINES.balanced);
-  lines.push("This is the discussion round, and it is adversarial, not polite. First steelman the target's point at its strongest, in your own words. Then attack its weakest premise with a number or a mechanism, not with tone. Concede only when beaten: if the point defeats your premise, say exactly what you concede and what it changes; if it does not, say you concede nothing and why the attack fails. End by pricing being wrong and naming the one fact or number that would settle the point. Do not repeat your opening. Return ONLY this JSON object, nothing else:");
+  lines.push("This is the discussion round, and it is adversarial, not polite. First steelman the target's point at its strongest, in your own words, in the steelman field: that field is required and must be at least 20 characters, and it must restate the target point fairly before any attack. Then attack its weakest premise with a number or a mechanism, not with tone. Concede only when beaten: if the point defeats your premise, say exactly what you concede and what it changes; if it does not, say you concede nothing AND give the reason why the attack fails, in at least 20 characters of reason. A bare word like nothing on its own is not a concession and will be rejected. End by pricing being wrong and naming the one fact or number that would settle the point. Do not repeat your opening. Return ONLY this JSON object, nothing else:");
   lines.push('{"answerTo": "short name of the seat you are answering", "agree": "agree | disagree",');
-  lines.push('"pointAnswered": "the target point at its strongest, in your own words",');
+  lines.push('"steelman": "the target point at its strongest, in your own words, at least 20 characters",');
+  lines.push('"pointAnswered": "the target point in short label form",');
   lines.push('"weakPoint": "the weakest premise in that point, stated plainly",');
   lines.push('"reply": "your attack on that premise, under 600 chars",');
   lines.push('"concede": "exactly what you concede, or nothing and why",');
@@ -892,7 +965,7 @@ BR.applyStepResult = function (state, step, parsed) {
     if (!state.discussion) { state.discussion = {}; }
     state.discussion[step.advisorId] = dc;
     var advD = BR.advisorById(state, step.advisorId);
-    state.transcript.push({ kind: "discussion", speaker: advD ? advD.short : step.advisorId, title: "Discussion", body: dc.reply, answerTo: dc.answerTo, agree: dc.agree, pointAnswered: dc.pointAnswered, weakPoint: dc.weakPoint, concede: dc.concede, costOfBeingWrong: dc.costOfBeingWrong, evidenceDemanded: dc.evidenceDemanded });
+    state.transcript.push({ kind: "discussion", speaker: advD ? advD.short : step.advisorId, title: "Discussion", body: dc.reply, answerTo: dc.answerTo, agree: dc.agree, pointAnswered: dc.pointAnswered, steelman: dc.steelman, weakPoint: dc.weakPoint, concede: dc.concede, costOfBeingWrong: dc.costOfBeingWrong, evidenceDemanded: dc.evidenceDemanded });
     return { ok: true };
   }
   if (step.key === "draft") {
@@ -935,13 +1008,31 @@ BR.advisorById = function (state, id) {
    {ok:true, text} or {ok:false, error}. Returns a promise of
    {ok:true} or {ok:false, failedStep}. On failure, state.failedStep is
    set and the run can resume from that step with BR.resumeDebate. */
+/* A step is already done when its result is already in the state, so
+   a debate resumed after a reload (or after a failed step) skips
+   completed steps instead of rerunning them. This is what makes the
+   in-progress persistence in main.js safe: only the next undone step
+   runs, earlier steps are never rerun and nothing is lost. */
+BR.stepAlreadyDone = function (state, step) {
+  if (step.key === "director") { return !!state.director; }
+  if (step.key.indexOf("opening:") === 0) { return !!state.opening[step.advisorId]; }
+  if (step.key.indexOf("debate:") === 0) {
+    var round = state.debateRounds[step.round - 1];
+    return !!(round && round.cards && round.cards[step.advisorId]);
+  }
+  if (step.key.indexOf("discussion:") === 0) { return !!(state.discussion && state.discussion[step.advisorId]); }
+  if (step.key === "draft") { return !!state.draft; }
+  if (step.key.indexOf("final:") === 0) { return !!state.final[step.advisorId]; }
+  if (step.key === "verdict") { return !!state.verdict; }
+  return false;
+};
+
 BR.runDebate = function (state, callFn, onProgress) {
   var steps = BR.buildStepList(state);
+  if (state.completed) { return Promise.resolve({ ok: true }); }
   var startIndex = 0;
-  if (state.failedStep) {
-    steps.forEach(function (s, i) { if (s.key === state.failedStep.key) { startIndex = i; } });
-    state.failedStep = null;
-  }
+  while (startIndex < steps.length && BR.stepAlreadyDone(state, steps[startIndex])) { startIndex += 1; }
+  state.failedStep = null;
   var index = startIndex;
   var next = function () {
     if (index >= steps.length) { return Promise.resolve({ ok: true }); }
@@ -986,6 +1077,7 @@ BR.buildTranscriptText = function (state) {
     var line = "[" + t.title + "] " + t.speaker + ": " + t.body;
     if (t.kind === "discussion" && t.answerTo) {
       line += " [answers " + t.answerTo + ", " + (t.agree || "") + ": " + (t.pointAnswered || "") +
+        " | steelman: " + (t.steelman || "") +
         " | weak point: " + (t.weakPoint || "") + " | concedes: " + (t.concede || "") +
         " | cost if wrong: " + (t.costOfBeingWrong || "") + " | settles it: " + (t.evidenceDemanded || "") + "]";
     }
@@ -1055,10 +1147,10 @@ BR.buildMarkdown = function (state) {
     lines.push("");
     lines.push("## Discussion");
     lines.push("");
-    lines.push("Each seat answers one other seat's actual point, after the debate rounds and before the draft. Each reply attacks a weak premise, concedes only when beaten, prices being wrong, and names the evidence that would settle it.");
+    lines.push("Each seat answers one other seat's actual point, after the debate rounds and before the draft. Each reply first steelmans the target point at its strongest, then attacks a weak premise, concedes only when beaten with a reason, prices being wrong, and names the evidence that would settle it. Discussion targets are assigned so seats do not all pile onto one opponent.");
     discussionEntries.forEach(function (t) {
       lines.push("- " + t.speaker + " answers " + t.answerTo + " (" + t.agree + " on: " + t.pointAnswered + "): " + t.body);
-      lines.push("  Weak point: " + (t.weakPoint || "") + " | Concedes: " + (t.concede || "") + " | Cost if wrong: " + (t.costOfBeingWrong || "") + " | Settles it: " + (t.evidenceDemanded || ""));
+      lines.push("  Steelman: " + (t.steelman || "") + " | Weak point: " + (t.weakPoint || "") + " | Concedes: " + (t.concede || "") + " | Cost if wrong: " + (t.costOfBeingWrong || "") + " | Settles it: " + (t.evidenceDemanded || ""));
     });
   }
   if (d) {

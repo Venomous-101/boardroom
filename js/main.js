@@ -10,6 +10,40 @@ var BR = (function () {
 })();
 
 BR.HISTORY_KEY = "boardroom.sessions.v1";
+BR.IN_PROGRESS_KEY = "boardroom.inprogress.v1";
+
+/* In-progress persistence: debate state only, saved after each step
+   and on a failed step, cleared when a debate completes or is
+   discarded. It never holds a key: the state carries only provider
+   and model names, never credentials, and the server key is never in
+   the page at all. A saved debate is resumed only on the user's
+   click, never automatically, so a reload never restarts a debate
+   the user did not ask to continue. */
+BR.loadInProgress = function () {
+  try {
+    var raw = window.localStorage.getItem(BR.IN_PROGRESS_KEY);
+    if (!raw) { return null; }
+    var parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || parsed.completed) { return null; }
+    return parsed;
+  } catch (e) {
+    return null;
+  }
+};
+
+BR.saveInProgress = function (state) {
+  try {
+    if (!state || state.completed) { return; }
+    var copy = JSON.parse(JSON.stringify(state));
+    delete copy.failedStep;
+    delete copy.onStepDone;
+    window.localStorage.setItem(BR.IN_PROGRESS_KEY, JSON.stringify(copy));
+  } catch (e) { /* persistence is best effort; a failed save never blocks the debate */ }
+};
+
+BR.clearInProgress = function () {
+  try { window.localStorage.removeItem(BR.IN_PROGRESS_KEY); } catch (e) { /* ignore */ }
+};
 
 BR.loadHistory = function () {
   try {
@@ -54,6 +88,8 @@ document.addEventListener("DOMContentLoaded", function () {
     downloadMd: $("download-md"), copyTx: $("copy-tx"), printBtn: $("print-btn"),
     voiceToggle: $("voice-toggle"),
     setupForm: $("setup-form"), debateView: $("debate-view"),
+    resumePanel: $("resume-panel"), resumeText: $("resume-text"),
+    resumeDebate: $("resume-debate"), resumeDiscard: $("resume-discard"),
     consultView: $("consult-view"), consultAnswer: $("consult-answer"),
     consultRetry: $("consult-retry"), consultNew: $("consult-new")
   };
@@ -112,7 +148,10 @@ document.addEventListener("DOMContentLoaded", function () {
       user = BR.debateUser(state, adv2, prev, step.round);
     } else if (step.key.indexOf("discussion:") === 0) {
       var advD = BR.advisorById(state, step.advisorId);
-      var target = BR.strongestDiscussionTarget(state, advD.id);
+      if (!state.discussionTargets || Object.keys(state.discussionTargets).length === 0) {
+        if (BR.assignDiscussionTargets) { BR.assignDiscussionTargets(state); }
+      }
+      var target = BR.discussionTargetFor ? BR.discussionTargetFor(state, advD.id) : BR.strongestDiscussionTarget(state, advD.id);
       var latest = state.debateRounds.length > 0
         ? state.debateRounds[state.debateRounds.length - 1].cards
         : state.opening;
@@ -171,6 +210,9 @@ document.addEventListener("DOMContentLoaded", function () {
     if (playbackSeatEl) {
       playbackSeatEl.classList.remove("lean-left");
       playbackSeatEl.classList.remove("lean-right");
+      playbackSeatEl.classList.remove("lean-toward");
+      playbackSeatEl.style.removeProperty("--lean-dx");
+      playbackSeatEl.style.removeProperty("--lean-dy");
       playbackSeatEl = null;
     }
   }
@@ -215,8 +257,12 @@ document.addEventListener("DOMContentLoaded", function () {
           if (a.id === speakerId) { sIdx = i; }
           if (a.id === targetId) { tIdx = i; }
         });
-        var lean = BR.leanClassFor ? BR.leanClassFor(sIdx, tIdx) : "";
-        if (lean) { seatEl.classList.add(lean); }
+        var vec = BR.leanVectorFor ? BR.leanVectorFor(sIdx, tIdx, currentState.advisors.length) : null;
+        if (vec) {
+          seatEl.classList.add("lean-toward");
+          seatEl.style.setProperty("--lean-dx", vec.dx + "px");
+          seatEl.style.setProperty("--lean-dy", vec.dy + "px");
+        }
       }
     }
     var interval = Math.max(55, Math.min(180, Math.round(9000 / words.length)));
@@ -247,19 +293,58 @@ document.addEventListener("DOMContentLoaded", function () {
     stopPlayback();
     hideError();
     setStatus("Debate running.");
-    currentState.onStepDone = onStepDone;
+    /* Save after every completed step, so a reload can resume from
+       the next undone step instead of restarting the debate. */
+    currentState.onStepDone = function () {
+      BR.saveInProgress(currentState);
+      onStepDone();
+    };
     return BR.runDebate(currentState, callFn, onProgress).then(function (res) {
       running = false;
       speakingId = null;
       renderAll();
       if (res.ok) {
         setStatus("Debate complete. Verdict ready below.");
+        BR.clearInProgress();
         BR.saveHistory(currentState);
         renderHistoryList();
       } else {
         setStatus("Debate paused at a failed step. Fix it and retry that step only.");
+        BR.saveInProgress(currentState);
         showError(res.failedStep);
       }
+    });
+  }
+
+  function showResumePanel() {
+    var saved = BR.loadInProgress();
+    if (!saved || !els.resumePanel) { return; }
+    els.resumeText.textContent = "An unfinished debate was found: \"" + (saved.title || "Untitled") + "\". Resume it to continue from the next undone step, or discard it to start fresh. Nothing was rerun on reload.";
+    els.resumePanel.classList.remove("hidden");
+  }
+
+  if (els.resumeDebate) {
+    els.resumeDebate.addEventListener("click", function () {
+      if (running) { return; }
+      var saved = BR.loadInProgress();
+      if (!saved) { return; }
+      currentState = saved;
+      currentConsult = null;
+      els.resumePanel.classList.add("hidden");
+      els.setupForm.classList.add("hidden");
+      els.consultView.classList.add("hidden");
+      els.debateView.classList.remove("hidden");
+      setStatus("Resuming your debate from the next undone step. Earlier steps were not rerun.");
+      renderAll();
+      runCurrent();
+    });
+  }
+
+  if (els.resumeDiscard) {
+    els.resumeDiscard.addEventListener("click", function () {
+      BR.clearInProgress();
+      if (els.resumePanel) { els.resumePanel.classList.add("hidden"); }
+      setStatus("Discarded the unfinished debate. Ready for a new debate.");
     });
   }
 
@@ -470,6 +555,7 @@ document.addEventListener("DOMContentLoaded", function () {
     els.consultView.classList.add("hidden");
     els.debateView.classList.remove("hidden");
     renderAll();
+    BR.saveInProgress(currentState);
     runCurrent();
   });
 
@@ -533,6 +619,7 @@ document.addEventListener("DOMContentLoaded", function () {
   populateConsultSeats();
   applyMode();
   renderHistoryList();
+  showResumePanel();
   scheduleBlink();
   setStatus("Ready. Describe a decision, and start the board.");
 });

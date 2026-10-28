@@ -215,7 +215,7 @@ BR.slicePrompt = function (persona, stepType, target) {
     if (target && slice.disagreements[target.id]) {
       lines.push("Answer " + target.short + " directly. Your standing difference with that seat is: " + slice.disagreements[target.id]);
     }
-    lines.push("Adversarial rule: attack, do not praise. Steelman first, hit the weakest premise, concede only when beaten, name the cost if wrong and the fact that would settle it.");
+    lines.push("Adversarial rule: attack, do not praise. Steelman first, in the required steelman field, hit the weakest premise, concede only when beaten, name the cost if wrong and the fact that would settle it.");
     lines.push("Failure check: " + slice.failure);
   } else if (step === "final") {
     lines.push("Final lens: " + slice.final);

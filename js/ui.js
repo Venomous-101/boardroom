@@ -154,30 +154,83 @@ BR.renderStepper = function (container, state) {
   container.innerHTML = html;
 };
 
+/* Round table geometry: seats sit on an ellipse, starting at the
+   top and going clockwise. Angles are in degrees, points are in
+   percent of the stage box, so the table scales with the page and
+   needs no fixed pixel layout. A custom advisor, if present, joins
+   the same ring, so the table grows with the council. */
+BR.seatPointFor = function (index, total) {
+  var n = total > 0 ? total : 1;
+  var rad = (-90 + (index * 360) / n) * Math.PI / 180;
+  return { x: 50 + 42 * Math.cos(rad), y: 50 + 44 * Math.sin(rad) };
+};
+
+/* Lean toward the addressed seat as a real vector on the table, not
+   just left or right: the unit direction from the speaker's point to
+   the target's point, scaled to 14 pixels. Same seat or no target:
+   no lean. The old leanClassFor stays for compatibility. */
+BR.leanVectorFor = function (speakerIndex, targetIndex, total) {
+  if (speakerIndex === null || speakerIndex === undefined ||
+      targetIndex === null || targetIndex === undefined || speakerIndex === targetIndex) { return null; }
+  var from = BR.seatPointFor(speakerIndex, total);
+  var to = BR.seatPointFor(targetIndex, total);
+  var dx = to.x - from.x;
+  var dy = to.y - from.y;
+  var len = Math.sqrt(dx * dx + dy * dy);
+  if (len === 0) { return null; }
+  return { dx: Math.round((dx / len) * 14), dy: Math.round((dy / len) * 14) };
+};
+
 BR.renderStage = function (container, state, speakingId, rebuttal) {
-  var html = '<div class="stage' + (speakingId ? ' spotlight' : '') + '">';
+  var total = state.advisors.length;
   var speakerIdx = -1;
   var targetIdx = -1;
   state.advisors.forEach(function (a, i) {
     if (a.id === speakingId) { speakerIdx = i; }
     if (rebuttal && rebuttal.to && a.id === rebuttal.to.id) { targetIdx = i; }
   });
-  state.advisors.forEach(function (a) {
+  var speakingAdv = speakerIdx >= 0 ? state.advisors[speakerIdx] : null;
+  var html = '<div class="stage-round' + (speakingId ? ' spotlight' : '') + '">';
+  /* Centre table: decision title, and the current speaker. The table
+     is decorative structure, not a seat, and carries no vote. */
+  html += '<div class="round-table"><div class="round-table-title">' + BR.esc(state.title || "The board") + '</div>';
+  if (speakingAdv) {
+    html += '<div class="round-table-speaker">' + BR.esc(speakingAdv.short) + ' speaking</div>';
+  } else {
+    html += '<div class="round-table-speaker">The board</div>';
+  }
+  html += '</div>';
+  /* Arrow across the table, speaker to target, drawn in the same
+     percent coordinates as the seats. The text strip below repeats
+     it in words for screen readers and for plain text. */
+  if (rebuttal && rebuttal.from && rebuttal.to && speakerIdx >= 0 && targetIdx >= 0 && speakerIdx !== targetIdx) {
+    var fromPt = BR.seatPointFor(speakerIdx, total);
+    var toPt = BR.seatPointFor(targetIdx, total);
+    html += '<svg class="round-arrows" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><defs><marker id="rt-head" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#e8a33d" /></marker></defs><line x1="' + fromPt.x + '" y1="' + fromPt.y + '" x2="' + toPt.x + '" y2="' + toPt.y + '" stroke="#e8a33d" stroke-width="0.6" marker-end="url(#rt-head)" /></svg>';
+  }
+  state.advisors.forEach(function (a, idx) {
     var found = BR.latestCardFor(state, a.id);
     var card = found ? found.card : null;
     var final = state.final[a.id];
     var speaking = speakingId === a.id;
+    var pt = BR.seatPointFor(idx, total);
     var cls = "stage-seat";
+    var style = "--seat-color:" + BR.esc(a.color) + ";";
     if (speaking) {
       cls += " speaking";
-      if (rebuttal && rebuttal.from && rebuttal.from.id === a.id) {
-        var lean = BR.leanClassFor ? BR.leanClassFor(speakerIdx, targetIdx) : "";
-        if (lean) { cls += " " + lean; }
+      if (rebuttal && rebuttal.from && rebuttal.from.id === a.id && targetIdx >= 0) {
+        var vec = BR.leanVectorFor(speakerIdx, targetIdx, total);
+        if (vec) {
+          cls += " lean-toward";
+          style += "--lean-dx:" + vec.dx + "px;--lean-dy:" + vec.dy + "px;";
+        }
       }
     }
     else if (speakingId) { cls += " dim"; }
+    if (pt.y < 50) { cls += " card-below"; }
     var weight = state.director && state.director.weights[a.id] ? state.director.weights[a.id] : null;
-    html += '<div class="' + cls + '" data-seat-id="' + BR.esc(a.id) + '" tabindex="0" role="button" aria-label="Focus ' + BR.esc(a.short) + '" style="--seat-color:' + BR.esc(a.color) + '">';
+    html += '<div class="round-seat" style="left:' + pt.x.toFixed(2) + '%;top:' + pt.y.toFixed(2) + '%;">';
+    html += '<div class="' + cls + '" data-seat-id="' + BR.esc(a.id) + '" tabindex="0" role="button" aria-label="Focus ' + BR.esc(a.short) + '" style="' + style + '">';
     html += '<span class="thumb-wrap">' + BR.avatarThumb(a, speaking ? "large talking" : "large idle");
     if (final) {
       html += '<span class="vote-stamp ' + BR.voteStampClass(final.vote) + '">' + BR.esc(BR.voteStampText(final.vote)) + '</span>';
@@ -203,12 +256,11 @@ BR.renderStage = function (container, state, speakingId, rebuttal) {
       html += '<span>Weight not set yet.</span>';
     }
     html += '</div>';
-    html += '</div>';
+    html += '</div></div>';
   });
   html += '</div>';
   if (rebuttal && rebuttal.from && rebuttal.to) {
     html += '<div class="rebuttal-strip" data-from="' + BR.esc(rebuttal.from.id) + '" data-to="' + BR.esc(rebuttal.to.id) + '">';
-    html += '<svg class="rebuttal-arrow" width="120" height="16" viewBox="0 0 120 16" aria-hidden="true"><defs><marker id="ra-head" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#c6d0da" /></marker></defs><line x1="0" y1="8" x2="112" y2="8" stroke="#c6d0da" stroke-width="2" marker-end="url(#ra-head)" /></svg>';
     var verb = (rebuttal.kind === "discussion") ? "answers" : "rebuts";
     html += '<span>' + BR.esc(rebuttal.from.short) + ' ' + verb + ' ' + BR.esc(rebuttal.to.short) + '</span></div>';
   }
@@ -269,6 +321,9 @@ BR.renderTranscript = function (container, state, speakingId) {
       }
       if (t.kind === "discussion" && t.answerTo) {
         html += '<div class="tx-rebuts">Answers ' + BR.esc(t.answerTo) + ' (' + BR.esc(t.agree || "") + ' on: ' + BR.esc(t.pointAnswered || "") + ')</div>';
+        if (t.steelman) {
+          html += '<div class="tx-rebuts">Steelman: ' + BR.esc(t.steelman) + '</div>';
+        }
         if (t.weakPoint || t.concede) {
           html += '<div class="tx-rebuts">Weak point: ' + BR.esc(t.weakPoint || "") + ' &middot; Concedes: ' + BR.esc(t.concede || "") + '</div>';
         }
