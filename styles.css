@@ -98,11 +98,48 @@ button:disabled { opacity: 0.55; cursor: default; }
 .step.current { color: #14100a; background: #e8a33d; border-color: #e8a33d; }
 .step-sep { color: #5a6b7a; }
 
-/* The stage: portraits in a row, speaker lit, everyone else dimmed.
-   Speaking seat rises, glows in its seat color, and bobs gently.
-   Idle seats breathe slowly. Hover lifts a seat and shows its card.
-   Click a seat to focus its transcript entries and key points. */
+/* The stage: seats around a round table, speaker lit, everyone else
+   dimmed. Speaking seat rises, glows in its seat color, and bobs
+   gently. Idle seats breathe slowly. Hover or keyboard focus lifts a
+   seat and shows its card. Click a seat to focus its transcript
+   entries and key points. The centre table carries the decision
+   title and the current speaker, never a vote. */
 .stage { display: flex; flex-wrap: wrap; gap: 16px; margin: 12px 0 8px; }
+.stage-round {
+  position: relative;
+  min-height: 560px;
+  margin: 12px 0 8px;
+}
+.round-seat {
+  position: absolute;
+  width: 144px;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+}
+.round-table {
+  position: absolute;
+  left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(46%, 420px);
+  text-align: center;
+  background: #171e26;
+  border: 2px solid #3a4756;
+  border-radius: 50%;
+  aspect-ratio: 1.6;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  padding: 20px;
+  z-index: 1;
+}
+.round-table-title { font-weight: 800; font-size: 16px; line-height: 1.35; }
+.round-table-speaker { color: #9aa7b4; font-size: 13px; margin-top: 6px; }
+.round-arrows {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  z-index: 1;
+  pointer-events: none;
+}
+.stage-round.spotlight .stage-seat.dim { opacity: 0.35; }
 .stage-seat {
   position: relative;
   width: 144px; text-align: center;
@@ -126,7 +163,8 @@ button:disabled { opacity: 0.55; cursor: default; }
   50% { transform: translateY(-10px); }
 }
 .stage-seat:hover { transform: translateY(-4px); }
-.stage-seat:hover .seat-card { display: block; }
+.stage-seat:hover .seat-card, .stage-seat:focus-within .seat-card { display: block; }
+.stage-seat.card-below .seat-card { bottom: auto; top: 100%; }
 .stage-name { font-weight: 800; margin-top: 8px; }
 .stage-role { color: #9aa7b4; font-size: 12px; }
 .stage-status { margin-top: 6px; font-size: 13px; }
@@ -214,10 +252,13 @@ button:disabled { opacity: 0.55; cursor: default; }
 .thumb.mouth-mid .mouth { display: block; height: 6px; }
 .thumb.mouth-open .mouth { display: block; height: 12px; }
 
-/* Lean toward the seat being answered. Uses translate, so it composes
-   with the speaking bob transform instead of fighting it. */
+/* Lean toward the seat being answered. Uses the CSS translate
+   property, so it composes with the speaking bob transform instead
+   of fighting it. lean-toward uses the real table vector, set as
+   --lean-dx and --lean-dy by the renderer. */
 .stage-seat.lean-left { translate: -10px 0; }
 .stage-seat.lean-right { translate: 10px 0; }
+.stage-seat.lean-toward { translate: var(--lean-dx, 0px) var(--lean-dy, 0px); }
 
 /* Voice toggle in the debate view controls. */
 .voice-toggle-label {
@@ -231,7 +272,7 @@ button:disabled { opacity: 0.55; cursor: default; }
   .thumb.idle { animation: none; }
   .thumb.talking::after { animation: none; }
   .thumb .mouth { transition: none; }
-  .stage-seat.lean-left, .stage-seat.lean-right { translate: 0 0; }
+  .stage-seat.lean-left, .stage-seat.lean-right, .stage-seat.lean-toward { translate: 0 0; }
 }
 
 /* Thinking dots, used on the speaking seat and in the transcript. */
@@ -354,6 +395,17 @@ footer {
   .thumb.large { width: 72px; height: 72px; min-width: 72px; }
   .thumb.large .thumb-initials { font-size: 22px; }
   .seat-card { width: 160px; }
+}
+
+/* Small screens: the round table falls back to a grid, so seats are
+   never squeezed off the edge or overlapped. The centre table becomes
+   a full-width banner at the top of the grid. */
+@media (max-width: 700px) {
+  .stage-round { min-height: 0; display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+  .round-table { position: static; transform: none; grid-column: 1 / -1; width: 100%; aspect-ratio: auto; border-radius: 12px; }
+  .round-arrows { display: none; }
+  .round-seat { position: static; transform: none; width: auto; }
+  .stage-seat { width: 100%; }
 }
 
 @media print {

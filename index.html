@@ -64,9 +64,9 @@
         <input type="text" id="d-model" value="openai/gpt-oss-120b">
       </label>
     </div>
-    <p class="muted">Full runs the whole council: brief, openings, fault lines, debate, an adversarial discussion round where each seat steelmans another seat's actual point, attacks its weakest premise, concedes only when beaten, and prices being wrong, draft resolution, vote, verdict. Quick skips debate rounds, the discussion round, and the draft stage. Consult asks one seat a single question, with no scoring and no saved session.</p>
-    <p class="muted">Each seat speaks from a distilled brain slice for that step, never a whole brain at once. Debate and discussion slices carry the seat's sharpest test; final slices carry the strongest counter to the seat's own lens. After each step, the latest line plays back word by word on the stage, with mouth states and a lean toward the seat being answered. Voice is optional, uses only your browser's built-in speech, and is off by default.</p>
-    <p class="muted">If Groq hits its rate limit, the server instantly tries free OpenRouter models instead, with no extra click. Each transcript step shows a small badge naming which provider and model served it.</p>
+    <p class="muted">Full runs the whole council: brief, openings, fault lines, debate, an adversarial discussion round where each seat first steelmans another seat's actual point in a labelled field, attacks its weakest premise, concedes only when beaten with a reason, and prices being wrong, draft resolution, vote, verdict. Discussion targets are assigned so seats do not all pile onto one opponent. Quick skips debate rounds, the discussion round, and the draft stage. Consult asks one seat a single question, with no scoring and no saved session.</p>
+    <p class="muted">Each seat speaks from a distilled brain slice for that step, never a whole brain at once. Debate and discussion slices carry the seat's sharpest test; final slices carry the strongest counter to the seat's own lens. The seats sit around a round table, with the decision title in the centre, and arrows run across the table from speaker to target. After each step, the latest line plays back word by word on the stage, with mouth states and a lean toward the seat being answered, using the real table angle. Voice is optional, uses only your browser's built-in speech, and is off by default.</p>
+    <p class="muted">If Groq hits its rate limit, the server instantly tries free OpenRouter models instead, with no extra click. Each transcript step shows a small badge naming which provider and model served it. If every free fallback fails, the error now names the fallback status and detail, and explains the OpenRouter free limits, so a daily cap reads as a daily cap, not as a mystery. If a debate is interrupted, reload and resume it from the next undone step; earlier steps are not rerun.</p>
     <div id="consult-seat-row" class="hidden">
       <label>Consult seat
         <select id="d-consult-seat"></select>
@@ -86,6 +86,15 @@
   </section>
 
   <p id="status" class="status" aria-live="polite"></p>
+
+  <div id="resume-panel" class="panel hidden">
+    <p id="resume-text"></p>
+    <div class="btn-row">
+      <button id="resume-debate" type="button">Resume debate</button>
+      <button id="resume-discard" type="button" class="secondary">Discard it</button>
+    </div>
+    <p class="muted">Resuming continues from the next undone step. Earlier steps are not rerun, and no key is ever stored with a saved debate.</p>
+  </div>
 
   <div id="error-box" class="panel error hidden">
     <p id="error-text"></p>

@@ -58,6 +58,17 @@ analytics or tracking of any kind.
   switch button is still offered on a failed step, and a manual
   switch is recorded in the transcript.
 - Past debate history stored in localStorage contains no keys.
+  The in-progress debate saved for resume after a reload is the
+  same: debate state only (titles, options, scores, transcript),
+  never a key, never a provider secret, and it is cleared when the
+  debate completes or is discarded. A saved debate is resumed only
+  on the user's click, never automatically.
+- When every free fallback fails, the server now returns the
+  fallback status and truncated fallback body alongside the primary
+  failure, and the page explains the OpenRouter free limits, so a
+  daily cap is reported honestly instead of as a vague exhaustion.
+  No waiting loop was added: retrying a daily cap today cannot help,
+  and the message says so.
 - Optional voice uses only the browser's built-in speech engine,
   off by default. Spoken text never leaves the browser for voice:
   no audio is sent to any server, and no key is involved.
