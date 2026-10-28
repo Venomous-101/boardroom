@@ -158,6 +158,8 @@ async function serverTests() {
   const r2 = await callServer(t2, base, "10.0.0.2");
   assert("server: all fallbacks exhausted reports primary failure flagged",
     r2.body.ok === false && r2.body.status === 429 && r2.body.fallbackExhausted === true, JSON.stringify(r2.body));
+  assert("server: exhausted fallback names its own status and detail",
+    r2.body.fallbackStatus === 429 && typeof r2.body.fallbackBody === "string" && r2.body.fallbackBody.indexOf("openrouter error 429") !== -1, JSON.stringify(r2.body));
 
   /* Groq 401 fails fast even with a fallback key present. */
   const t3 = loadServer(bothKeys, scriptFor([
@@ -317,6 +319,7 @@ function makeCanned(opts) {
         answerTo: "Offer",
         agree: "disagree",
         pointAnswered: "Canned point from Offer.",
+        steelman: "Canned steelman: Offer's point at its strongest, fairly stated.",
         weakPoint: "Canned weak premise.",
         reply: "Canned discussion reply.",
         concede: "Nothing conceded: the attack fails because the premise holds.",
@@ -657,7 +660,18 @@ async function main() {
   assert("custom persona slice falls back to the custom prompt",
     BR.slicePrompt(BR.buildCustomPersona("The Skeptic", "Demand proof."), "opening").indexOf("Demand proof.") !== -1);
   assert("discussion validation passes a complete adversarial card",
-    !!BR.validateDiscussion({ answerTo: "Offer", agree: "disagree", pointAnswered: "P.", weakPoint: "W.", reply: "R.", concede: "Nothing.", costOfBeingWrong: "C.", evidenceDemanded: "E.", reason: "X." }));
+    !!BR.validateDiscussion({ answerTo: "Offer", agree: "disagree", pointAnswered: "P.", steelman: "Offer's point at its strongest, fairly stated.", weakPoint: "W.", reply: "R.", concede: "Nothing conceded: the attack fails because the premise holds.", costOfBeingWrong: "C.", evidenceDemanded: "E.", reason: "X." }));
+  assert("discussion validation requires a labelled steelman",
+    BR.validateDiscussion({ answerTo: "Offer", agree: "disagree", pointAnswered: "P.", weakPoint: "W.", reply: "R.", concede: "Nothing conceded: the attack fails because the premise holds.", costOfBeingWrong: "C.", evidenceDemanded: "E." }) === null &&
+    BR.validateDiscussion({ answerTo: "Offer", agree: "disagree", pointAnswered: "P.", steelman: "Too short.", weakPoint: "W.", reply: "R.", concede: "Nothing conceded: the attack fails because the premise holds.", costOfBeingWrong: "C.", evidenceDemanded: "E." }) === null);
+  assert("discussion validation rejects a bare nothing concession",
+    BR.concessionIsReasoned("Nothing.") === false &&
+    BR.concessionIsReasoned("None") === false &&
+    BR.concessionIsReasoned("No concession") === false &&
+    BR.validateDiscussion({ answerTo: "Offer", agree: "disagree", pointAnswered: "P.", steelman: "Offer's point at its strongest, fairly stated.", weakPoint: "W.", reply: "R.", concede: "Nothing.", costOfBeingWrong: "C.", evidenceDemanded: "E." }) === null);
+  assert("discussion validation accepts a reasoned nothing concession",
+    BR.concessionIsReasoned("Nothing conceded: the attack fails because the premise holds.") === true &&
+    BR.concessionIsReasoned("I concede the timing point because the cash data beats my case.") === true);
   assert("discussion validation rejects a missing agree, point, weak point, concede, cost, or evidence",
     BR.validateDiscussion({ answerTo: "Offer", pointAnswered: "P.", weakPoint: "W.", reply: "R.", concede: "N.", costOfBeingWrong: "C.", evidenceDemanded: "E." }) === null &&
     BR.validateDiscussion({ answerTo: "Offer", agree: "agree", reply: "R.", concede: "N.", costOfBeingWrong: "C.", evidenceDemanded: "E." }) === null &&
@@ -674,6 +688,49 @@ async function main() {
       });
       const u = BR.discussionUser(sU, BR.PERSONAS[0], BR.PERSONAS[1], sU.opening.offer);
       return u.indexOf("Do not agree politely") !== -1 && u.indexOf("weakPoint") !== -1 && u.indexOf("evidenceDemanded") !== -1;
+    })());
+  assert("discussion prompt requires the steelman field and a reasoned concession",
+    (function () {
+      const sP = makeDebate(1);
+      sP.opening = {};
+      BR.PERSONAS.forEach(function (p) {
+        sP.opening[p.id] = { stance: "Yes", recommendedId: "A", optionScores: { A: 7, B: 6, C: 3 }, pillarScore: 7, confidence: 4, ruinRisk: "none", door: "two-way", reason: "R.", changeMind: "N." };
+      });
+      const u = BR.discussionUser(sP, BR.PERSONAS[0], BR.PERSONAS[1], sP.opening.offer);
+      return u.indexOf('"steelman"') !== -1 && u.indexOf("at least 20 characters") !== -1 && u.indexOf("bare word like nothing") !== -1;
+    })());
+  assert("discussion targets are assigned distinctly, never self, and used targets stay taken on resume",
+    (function () {
+      var sA = makeDebate(1);
+      sA.opening = {};
+      BR.PERSONAS.forEach(function (p) {
+        sA.opening[p.id] = { stance: "Yes", recommendedId: p.id === "offer" ? "B" : "A", optionScores: { A: 7, B: 6, C: 3 }, pillarScore: p.id === "offer" ? 9 : 5, confidence: 4, ruinRisk: "none", door: "two-way", reason: "R.", changeMind: "N." };
+      });
+      var assigned = BR.assignDiscussionTargets(sA);
+      var values = Object.keys(assigned).map(function (k) { return assigned[k]; });
+      var distinct = values.filter(function (v, i) { return values.indexOf(v) === i; }).length;
+      var selfTarget = Object.keys(assigned).some(function (k) { return assigned[k] === k; });
+      var resumed = BR.assignDiscussionTargets(sA);
+      return distinct === values.length && !selfTarget && BR.discussionTargetFor(sA, "operator").id === assigned.operator;
+    })());
+  assert("round table geometry places seats on an ellipse and leans by real angle",
+    (function () {
+      var top = BR.seatPointFor(0, 8);
+      var right = BR.seatPointFor(2, 8);
+      var vec = BR.leanVectorFor(0, 2, 8);
+      return Math.abs(top.x - 50) < 0.01 && top.y < 10 && right.x > 90 && vec && vec.dx > 0 && vec.dy > 0;
+    })());
+  assert("resume skips completed steps and reports a completed debate as done",
+    (function () {
+      var resumed = makeDebate(1);
+      resumed.director = { weights: {} };
+      resumed.opening = {};
+      BR.PERSONAS.forEach(function (p) {
+        resumed.opening[p.id] = { stance: "Yes", recommendedId: "A", optionScores: { A: 7, B: 6, C: 3 }, pillarScore: 7, confidence: 4, ruinRisk: "none", door: "two-way", reason: "R.", changeMind: "N." };
+      });
+      var steps = BR.buildStepList(resumed);
+      var done = steps.filter(function (s) { return BR.stepAlreadyDone(resumed, s); });
+      return done.length === 9 && BR.stepAlreadyDone(resumed, { key: "discussion:operator" }) === false;
     })());
   assert("debate prompt requires a steelman before the attack",
     BR.debateUser(state, BR.PERSONAS[0], state.opening, 1).indexOf("Steelman it in one sentence") !== -1);
@@ -705,11 +762,13 @@ async function main() {
   assert("markdown carries an adversarial discussion section",
     BR.buildMarkdown(state).indexOf("## Discussion") !== -1 &&
     BR.buildMarkdown(state).indexOf("Canned discussion reply.") !== -1 &&
+    BR.buildMarkdown(state).indexOf("Steelman: Canned steelman") !== -1 &&
     BR.buildMarkdown(state).indexOf("Weak point: Canned weak premise.") !== -1 &&
     BR.buildMarkdown(state).indexOf("Concedes: Nothing conceded") !== -1 &&
     BR.buildMarkdown(state).indexOf("Cost if wrong: Canned cost if wrong.") !== -1 &&
     BR.buildMarkdown(state).indexOf("Settles it: Canned settling number.") !== -1);
   assert("transcript text annotates discussion answers with weak point, concede, cost, and evidence",
+    BR.buildTranscriptText(state).indexOf("steelman: Canned steelman") !== -1 &&
     BR.buildTranscriptText(state).indexOf("weak point: Canned weak premise.") !== -1 &&
     BR.buildTranscriptText(state).indexOf("concedes: Nothing conceded") !== -1 &&
     BR.buildTranscriptText(state).indexOf("cost if wrong: Canned cost if wrong.") !== -1 &&
@@ -738,16 +797,18 @@ async function main() {
       s4.final = {};
       const c = { innerHTML: "" };
       BR.renderStage(c, s4, "operator", { from: BR.PERSONAS[0], to: BR.PERSONAS[1], kind: "discussion" });
-      return c.innerHTML.indexOf("lean-right") !== -1 && c.innerHTML.indexOf("answers Offer") !== -1;
+      return c.innerHTML.indexOf("lean-toward") !== -1 && c.innerHTML.indexOf("--lean-dx:") !== -1 &&
+        c.innerHTML.indexOf("stage-round") !== -1 && c.innerHTML.indexOf("round-table") !== -1 &&
+        c.innerHTML.indexOf("answers Offer") !== -1;
     })());
   assert("transcript renders discussion answers lines",
     (function () {
       const s5 = makeDebate(1);
-      s5.transcript = [{ kind: "discussion", speaker: "Operator", title: "Discussion", body: "R.", answerTo: "Offer", agree: "disagree", pointAnswered: "P.", weakPoint: "W.", concede: "Nothing.", costOfBeingWrong: "C.", evidenceDemanded: "E." }];
+      s5.transcript = [{ kind: "discussion", speaker: "Operator", title: "Discussion", body: "R.", answerTo: "Offer", agree: "disagree", pointAnswered: "P.", steelman: "S.", weakPoint: "W.", concede: "Nothing.", costOfBeingWrong: "C.", evidenceDemanded: "E." }];
       s5.servedBy = {};
       const c = { innerHTML: "" };
       BR.renderTranscript(c, s5, null);
-      return c.innerHTML.indexOf("Answers Offer") !== -1 && c.innerHTML.indexOf("Weak point: W.") !== -1 &&
+      return c.innerHTML.indexOf("Answers Offer") !== -1 && c.innerHTML.indexOf("Steelman: S.") !== -1 && c.innerHTML.indexOf("Weak point: W.") !== -1 &&
         c.innerHTML.indexOf("Concedes: Nothing.") !== -1 && c.innerHTML.indexOf("Cost if wrong: C.") !== -1;
     })());
   assert("old saved debates render without discussion or served data",
@@ -778,7 +839,8 @@ async function main() {
     (function () {
       const css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
       return css.indexOf(".thumb.mouth-open") !== -1 && css.indexOf(".stage-seat.lean-right") !== -1 &&
-        css.indexOf(".voice-toggle-label") !== -1 && css.indexOf("prefers-reduced-motion") !== -1;
+        css.indexOf(".stage-seat.lean-toward") !== -1 && css.indexOf(".stage-round") !== -1 &&
+        css.indexOf(".round-table") !== -1 && css.indexOf(".voice-toggle-label") !== -1 && css.indexOf("prefers-reduced-motion") !== -1;
     })());
   assert("page has a voice toggle, off by default, and no key input",
     (function () {
@@ -786,6 +848,12 @@ async function main() {
       return html.indexOf('id="voice-toggle"') !== -1 && html.indexOf('id="voice-toggle" checked') === -1 &&
         html.toLowerCase().indexOf("api key") !== -1 && html.indexOf('type="password"') === -1 &&
         html.indexOf("d-api-key") === -1;
+    })());
+  assert("page has a resume panel with resume and discard controls",
+    (function () {
+      const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+      return html.indexOf('id="resume-panel"') !== -1 && html.indexOf('id="resume-debate"') !== -1 &&
+        html.indexOf('id="resume-discard"') !== -1;
     })());
 
   /* ---------- Server function: OpenRouter fallback ---------- */
