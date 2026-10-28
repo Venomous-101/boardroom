@@ -58,6 +58,9 @@ analytics or tracking of any kind.
   switch button is still offered on a failed step, and a manual
   switch is recorded in the transcript.
 - Past debate history stored in localStorage contains no keys.
+- Optional voice uses only the browser's built-in speech engine,
+  off by default. Spoken text never leaves the browser for voice:
+  no audio is sent to any server, and no key is involved.
 
 ## How the server function is protected
 

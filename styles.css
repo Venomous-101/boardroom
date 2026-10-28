@@ -198,10 +198,40 @@ button:disabled { opacity: 0.55; cursor: default; }
 }
 .thumb.blinking .thumb-img, .thumb.blinking .thumb-initials { opacity: 0.2; }
 
+/* Speaking playback: a stylised mouth bar on the portrait thumb.
+   It is an indicator that cycles with the spoken word, not lip-sync.
+   Hidden unless a mouth state class is present. */
+.thumb .mouth {
+  display: none;
+  position: absolute; left: 50%; bottom: 12%;
+  transform: translateX(-50%);
+  width: 22%; background: #0f1419;
+  border-radius: 4px; z-index: 2;
+  transition: height 120ms ease;
+}
+.thumb.large .mouth { width: 18%; }
+.thumb.mouth-closed .mouth { display: block; height: 2px; }
+.thumb.mouth-mid .mouth { display: block; height: 6px; }
+.thumb.mouth-open .mouth { display: block; height: 12px; }
+
+/* Lean toward the seat being answered. Uses translate, so it composes
+   with the speaking bob transform instead of fighting it. */
+.stage-seat.lean-left { translate: -10px 0; }
+.stage-seat.lean-right { translate: 10px 0; }
+
+/* Voice toggle in the debate view controls. */
+.voice-toggle-label {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 14px; font-weight: 600; margin: 0;
+}
+.voice-toggle-label input { width: auto; margin: 0; }
+
 @media (prefers-reduced-motion: reduce) {
   .stage-seat.speaking { animation: none; }
   .thumb.idle { animation: none; }
   .thumb.talking::after { animation: none; }
+  .thumb .mouth { transition: none; }
+  .stage-seat.lean-left, .stage-seat.lean-right { translate: 0 0; }
 }
 
 /* Thinking dots, used on the speaking seat and in the transcript. */
