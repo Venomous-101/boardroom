@@ -52,6 +52,7 @@ document.addEventListener("DOMContentLoaded", function () {
     transcript: $("transcript"), keypoints: $("keypoints"),
     verdict: $("verdict"), history: $("history"),
     downloadMd: $("download-md"), copyTx: $("copy-tx"), printBtn: $("print-btn"),
+    voiceToggle: $("voice-toggle"),
     setupForm: $("setup-form"), debateView: $("debate-view"),
     consultView: $("consult-view"), consultAnswer: $("consult-answer"),
     consultRetry: $("consult-retry"), consultNew: $("consult-new")
@@ -102,13 +103,22 @@ document.addEventListener("DOMContentLoaded", function () {
     } else if (step.key.indexOf("opening:") === 0) {
       var adv = BR.advisorById(state, step.advisorId);
       var w = state.director.weights[adv.id] ? state.director.weights[adv.id].weight : 1;
-      system = BR.personaPromptFor(adv);
+      system = BR.slicePrompt ? BR.slicePrompt(adv, "opening") : BR.personaPromptFor(adv);
       user = BR.openingUser(state, adv, w);
     } else if (step.key.indexOf("debate:") === 0) {
       var adv2 = BR.advisorById(state, step.advisorId);
       var prev = step.round === 1 ? state.opening : state.debateRounds[step.round - 2].cards;
-      system = BR.personaPromptFor(adv2);
+      system = BR.slicePrompt ? BR.slicePrompt(adv2, "debate") : BR.personaPromptFor(adv2);
       user = BR.debateUser(state, adv2, prev, step.round);
+    } else if (step.key.indexOf("discussion:") === 0) {
+      var advD = BR.advisorById(state, step.advisorId);
+      var target = BR.strongestDiscussionTarget(state, advD.id);
+      var latest = state.debateRounds.length > 0
+        ? state.debateRounds[state.debateRounds.length - 1].cards
+        : state.opening;
+      var targetCard = target ? latest[target.id] : null;
+      system = BR.slicePrompt ? BR.slicePrompt(advD, "discussion", target) : BR.personaPromptFor(advD);
+      user = BR.discussionUser(state, advD, target, targetCard);
     } else if (step.key === "draft") {
       var latest = state.debateRounds.length > 0
         ? state.debateRounds[state.debateRounds.length - 1].cards
@@ -119,25 +129,122 @@ document.addEventListener("DOMContentLoaded", function () {
       user = BR.draftUser(state, scores, rec);
     } else if (step.key.indexOf("final:") === 0) {
       var adv3 = BR.advisorById(state, step.advisorId);
-      system = BR.personaPromptFor(adv3);
+      system = BR.slicePrompt ? BR.slicePrompt(adv3, "final") : BR.personaPromptFor(adv3);
       user = BR.finalUser(state, adv3);
     }
     return BR.callLLM(providerId, model, system, user);
   }
 
   function onProgress(step, attempt) {
+    stopPlayback();
     speakingId = step.advisorId || null;
     setStatus("Working: " + step.label + (attempt > 1 ? " (attempt " + attempt + ")" : "") + ".");
     if (currentState) { renderAll(); }
   }
 
+  /* Word-by-word speaking playback. After a step completes, the last
+     transcript entry reveals word by word while the speaker's portrait
+     cycles mouth states and leans toward the seat it addressed, when
+     there is one. Mouth states are stylised indicators, not lip-sync.
+     Under reduced motion, the full text shows at once and no mouth
+     cycling runs. Voice uses only the browser's built-in speech, only
+     when the toggle is on (off by default); nothing is sent anywhere
+     and no key is involved. Playback never blocks the debate: the
+     next step runs on its own schedule regardless of playback. */
+  var playbackTimer = null;
+  var playbackSeatEl = null;
+  var playbackThumbEl = null;
+
+  function voiceOn() {
+    return !!(els.voiceToggle && els.voiceToggle.checked);
+  }
+
+  function stopPlayback() {
+    if (playbackTimer) { clearInterval(playbackTimer); playbackTimer = null; }
+    try {
+      if (window.speechSynthesis) { window.speechSynthesis.cancel(); }
+    } catch (e) { /* ignore */ }
+    if (playbackThumbEl) {
+      ["mouth-closed", "mouth-mid", "mouth-open"].forEach(function (c) { playbackThumbEl.classList.remove(c); });
+      playbackThumbEl = null;
+    }
+    if (playbackSeatEl) {
+      playbackSeatEl.classList.remove("lean-left");
+      playbackSeatEl.classList.remove("lean-right");
+      playbackSeatEl = null;
+    }
+  }
+
+  function playLastEntry() {
+    stopPlayback();
+    if (!currentState || !currentState.transcript || currentState.transcript.length === 0) { return; }
+    var last = currentState.transcript[currentState.transcript.length - 1];
+    var entries = els.transcript.querySelectorAll(".tx-entry");
+    if (entries.length === 0) { return; }
+    var entryEl = entries[entries.length - 1];
+    var bodyEl = entryEl.querySelector(".tx-body");
+    if (!bodyEl) { return; }
+    var fullText = last.body || bodyEl.textContent || "";
+    var words = BR.splitWords ? BR.splitWords(fullText) : fullText.split(/\s+/).filter(Boolean);
+    if (words.length === 0) { return; }
+    if (voiceOn()) {
+      try {
+        if (window.speechSynthesis && window.SpeechSynthesisUtterance) {
+          var utter = new SpeechSynthesisUtterance(fullText);
+          window.speechSynthesis.speak(utter);
+        }
+      } catch (e) { /* voice is best effort; playback continues silently */ }
+    }
+    if (reducedMotion) { return; }
+    var speakerId = entryEl.getAttribute("data-speaker") || "";
+    var seatEl = speakerId ? els.stage.querySelector('[data-seat-id="' + speakerId + '"]') : null;
+    if (seatEl) {
+      playbackSeatEl = seatEl;
+      var thumbEl = seatEl.querySelector(".thumb");
+      if (thumbEl) { playbackThumbEl = thumbEl; }
+      var targetShort = last.answerTo || last.disagreeWith || "";
+      var targetId = "";
+      if (targetShort) {
+        var targetAdv = BR.advisorByShort(currentState, targetShort);
+        if (targetAdv) { targetId = targetAdv.id; }
+      }
+      if (targetId) {
+        var sIdx = -1;
+        var tIdx = -1;
+        currentState.advisors.forEach(function (a, i) {
+          if (a.id === speakerId) { sIdx = i; }
+          if (a.id === targetId) { tIdx = i; }
+        });
+        var lean = BR.leanClassFor ? BR.leanClassFor(sIdx, tIdx) : "";
+        if (lean) { seatEl.classList.add(lean); }
+      }
+    }
+    var interval = Math.max(55, Math.min(180, Math.round(9000 / words.length)));
+    var i = 0;
+    bodyEl.textContent = "";
+    playbackTimer = setInterval(function () {
+      i += 1;
+      bodyEl.textContent = words.slice(0, i).join(" ");
+      if (playbackThumbEl) {
+        ["mouth-closed", "mouth-mid", "mouth-open"].forEach(function (c) { playbackThumbEl.classList.remove(c); });
+        playbackThumbEl.classList.add(BR.mouthClassFor(i - 1));
+      }
+      if (i >= words.length) {
+        bodyEl.textContent = fullText;
+        stopPlayback();
+      }
+    }, interval);
+  }
+
   function onStepDone() {
     speakingId = null;
     renderAll();
+    playLastEntry();
   }
 
   function runCurrent() {
     running = true;
+    stopPlayback();
     hideError();
     setStatus("Debate running.");
     currentState.onStepDone = onStepDone;
@@ -180,6 +287,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   function resetToSetup() {
     if (running) { return; }
+    stopPlayback();
     currentState = null;
     currentConsult = null;
     els.debateView.classList.add("hidden");
@@ -197,7 +305,10 @@ document.addEventListener("DOMContentLoaded", function () {
     BR.renderConsult(els.consultAnswer, currentConsult);
     var providerId = currentConsult.provider;
     var model = currentConsult.model || BR.PROVIDERS[providerId].defaultModel;
-    BR.callLLM(providerId, model, BR.consultSystem, BR.consultUser(currentConsult, currentConsult.advisor)).then(function (res) {
+    var consultSystem = (currentConsult.advisor.id !== "custom" && BR.slicePrompt)
+      ? BR.slicePrompt(currentConsult.advisor, "consult") + "\nAnswer as prose, in this order: your recommendation (which option, or none), why from your pillar, the biggest risk, and the one fact or number that would change your mind. Keep it under 400 words. Do not score anything and do not use JSON."
+      : BR.consultSystem;
+    BR.callLLM(providerId, model, consultSystem, BR.consultUser(currentConsult, currentConsult.advisor)).then(function (res) {
       running = false;
       if (res.ok && res.text) {
         currentConsult.answer = res.text;

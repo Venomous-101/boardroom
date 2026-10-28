@@ -84,6 +84,7 @@ BR.avatarThumb = function (a, cls) {
   if (path) {
     inner += '<img class="thumb-img" src="' + BR.esc(path) + '" alt="" onerror="this.style.display=\'none\'">';
   }
+  inner += '<span class="mouth" aria-hidden="true"></span>';
   return '<span class="thumb ' + (cls || "") + '">' + inner + '</span>';
 };
 
@@ -102,28 +103,35 @@ BR.currentRebuttal = function (state) {
     if (t.kind === "argument" && t.disagreeWith) {
       var from = BR.advisorByShort(state, t.speaker);
       var to = BR.advisorByShort(state, t.disagreeWith);
-      if (from && to && from.id !== to.id) { return { from: from, to: to }; }
+      if (from && to && from.id !== to.id) { return { from: from, to: to, kind: "argument" }; }
+    }
+    if (t.kind === "discussion" && t.answerTo) {
+      var fromD = BR.advisorByShort(state, t.speaker);
+      var toD = BR.advisorByShort(state, t.answerTo);
+      if (fromD && toD && fromD.id !== toD.id) { return { from: fromD, to: toD, kind: "discussion" }; }
     }
   }
   return null;
 };
 
 /* Room progress. Full: 0 Brief, 1 Openings, 2 Fault lines, 3 Debate,
-   4 Draft, 5 Vote, 6 Verdict. Quick: 0 Brief, 1 Openings, 2 Fault
-   lines, 3 Vote, 4 Verdict (no debate, no draft). Consult: no stepper. */
+   4 Discussion, 5 Draft, 6 Vote, 7 Verdict. Quick: 0 Brief, 1 Openings,
+   2 Fault lines, 3 Vote, 4 Verdict (no debate, no discussion, no
+   draft). Consult: no stepper. */
 BR.stepperLabelsFor = function (state) {
   var mode = (state && state.mode) || "full";
   if (mode === "quick") { return ["Brief", "Openings", "Fault lines", "Vote", "Verdict"]; }
   if (mode === "consult") { return []; }
-  return ["Brief", "Openings", "Fault lines", "Debate", "Draft", "Vote", "Verdict"];
+  return ["Brief", "Openings", "Fault lines", "Debate", "Discussion", "Draft", "Vote", "Verdict"];
 };
 
 BR.phaseOf = function (state) {
   var mode = (state && state.mode) || "full";
   if (mode === "consult") { return -1; }
-  if (state.verdict) { return mode === "quick" ? 4 : 6; }
-  if (Object.keys(state.final).length > 0) { return mode === "quick" ? 3 : 5; }
-  if (mode !== "quick" && state.draft) { return 4; }
+  if (state.verdict) { return mode === "quick" ? 4 : 7; }
+  if (Object.keys(state.final).length > 0) { return mode === "quick" ? 3 : 6; }
+  if (mode !== "quick" && state.draft) { return 5; }
+  if (mode !== "quick" && state.discussion && Object.keys(state.discussion).length > 0) { return 4; }
   if (state.debateRounds.length > 0) { return 3; }
   if (state.director && Object.keys(state.opening).length >= state.advisors.length) { return 2; }
   if (state.director) { return 1; }
@@ -148,13 +156,25 @@ BR.renderStepper = function (container, state) {
 
 BR.renderStage = function (container, state, speakingId, rebuttal) {
   var html = '<div class="stage' + (speakingId ? ' spotlight' : '') + '">';
+  var speakerIdx = -1;
+  var targetIdx = -1;
+  state.advisors.forEach(function (a, i) {
+    if (a.id === speakingId) { speakerIdx = i; }
+    if (rebuttal && rebuttal.to && a.id === rebuttal.to.id) { targetIdx = i; }
+  });
   state.advisors.forEach(function (a) {
     var found = BR.latestCardFor(state, a.id);
     var card = found ? found.card : null;
     var final = state.final[a.id];
     var speaking = speakingId === a.id;
     var cls = "stage-seat";
-    if (speaking) { cls += " speaking"; }
+    if (speaking) {
+      cls += " speaking";
+      if (rebuttal && rebuttal.from && rebuttal.from.id === a.id) {
+        var lean = BR.leanClassFor ? BR.leanClassFor(speakerIdx, targetIdx) : "";
+        if (lean) { cls += " " + lean; }
+      }
+    }
     else if (speakingId) { cls += " dim"; }
     var weight = state.director && state.director.weights[a.id] ? state.director.weights[a.id] : null;
     html += '<div class="' + cls + '" data-seat-id="' + BR.esc(a.id) + '" tabindex="0" role="button" aria-label="Focus ' + BR.esc(a.short) + '" style="--seat-color:' + BR.esc(a.color) + '">';
@@ -189,7 +209,8 @@ BR.renderStage = function (container, state, speakingId, rebuttal) {
   if (rebuttal && rebuttal.from && rebuttal.to) {
     html += '<div class="rebuttal-strip" data-from="' + BR.esc(rebuttal.from.id) + '" data-to="' + BR.esc(rebuttal.to.id) + '">';
     html += '<svg class="rebuttal-arrow" width="120" height="16" viewBox="0 0 120 16" aria-hidden="true"><defs><marker id="ra-head" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#c6d0da" /></marker></defs><line x1="0" y1="8" x2="112" y2="8" stroke="#c6d0da" stroke-width="2" marker-end="url(#ra-head)" /></svg>';
-    html += '<span>' + BR.esc(rebuttal.from.short) + ' rebuts ' + BR.esc(rebuttal.to.short) + '</span></div>';
+    var verb = (rebuttal.kind === "discussion") ? "answers" : "rebuts";
+    html += '<span>' + BR.esc(rebuttal.from.short) + ' ' + verb + ' ' + BR.esc(rebuttal.to.short) + '</span></div>';
   }
   html += '<p class="stage-note muted sim-note">Seats are AI simulations inspired by public frameworks. They are not the real people and do not speak for them.</p>';
   container.innerHTML = html;
@@ -245,6 +266,15 @@ BR.renderTranscript = function (container, state, speakingId) {
       html += '<div class="tx-body">' + BR.esc(t.body) + '</div>';
       if (t.disagreeWith) {
         html += '<div class="tx-rebuts">Rebuts ' + BR.esc(t.disagreeWith) + '</div>';
+      }
+      if (t.kind === "discussion" && t.answerTo) {
+        html += '<div class="tx-rebuts">Answers ' + BR.esc(t.answerTo) + ' (' + BR.esc(t.agree || "") + ' on: ' + BR.esc(t.pointAnswered || "") + ')</div>';
+        if (t.weakPoint || t.concede) {
+          html += '<div class="tx-rebuts">Weak point: ' + BR.esc(t.weakPoint || "") + ' &middot; Concedes: ' + BR.esc(t.concede || "") + '</div>';
+        }
+        if (t.costOfBeingWrong || t.evidenceDemanded) {
+          html += '<div class="tx-rebuts">Cost if wrong: ' + BR.esc(t.costOfBeingWrong || "") + ' &middot; Settles it: ' + BR.esc(t.evidenceDemanded || "") + '</div>';
+        }
       }
       html += '</div></div>';
     }

@@ -94,6 +94,7 @@ BR.createDebate = function (input) {
     director: null,
     opening: {},
     debateRounds: [],
+    discussion: {},
     draft: null,
     final: {},
     verdict: null,
@@ -224,6 +225,74 @@ BR.validateDebate = function (obj, optionIds) {
   base.moved = BR.clampText(typeof obj.moved === "string" ? obj.moved : "no", 120);
   base.conditions = Array.isArray(obj.conditions) ? obj.conditions.slice(0, 3).map(function (a) { return BR.clampText(String(a), 200); }) : [];
   return base;
+};
+
+/* Discussion round: prose replies only, no scores. A discussion card
+   never changes verdict maths, which still reads the last debate
+   round's cards. That keeps the discussion honest deliberation: seats
+   answer each other's actual points without quietly rescoring. */
+BR.validateDiscussion = function (obj) {
+  if (!obj || typeof obj !== "object") { return null; }
+  var agree = (obj.agree === "agree" || obj.agree === "disagree") ? obj.agree : null;
+  if (!agree) { return null; }
+  if (typeof obj.answerTo !== "string" || !obj.answerTo.trim()) { return null; }
+  if (typeof obj.pointAnswered !== "string" || !obj.pointAnswered.trim()) { return null; }
+  if (typeof obj.reply !== "string" || !obj.reply.trim()) { return null; }
+  /* Adversarial fields: a discussion reply is only complete when it
+     names the weak premise it attacks, states what it concedes (or
+     that it concedes nothing and why), prices being wrong, and names
+     the evidence that would settle the point. A reply that only
+     agrees politely fails validation and is retried. */
+  if (typeof obj.weakPoint !== "string" || !obj.weakPoint.trim()) { return null; }
+  if (typeof obj.concede !== "string" || !obj.concede.trim()) { return null; }
+  if (typeof obj.costOfBeingWrong !== "string" || !obj.costOfBeingWrong.trim()) { return null; }
+  if (typeof obj.evidenceDemanded !== "string" || !obj.evidenceDemanded.trim()) { return null; }
+  return {
+    answerTo: BR.clampText(obj.answerTo.trim(), 60),
+    agree: agree,
+    pointAnswered: BR.clampText(obj.pointAnswered.trim(), 300),
+    weakPoint: BR.clampText(obj.weakPoint.trim(), 300),
+    reply: BR.clampText(obj.reply.trim(), 600),
+    concede: BR.clampText(obj.concede.trim(), 300),
+    costOfBeingWrong: BR.clampText(obj.costOfBeingWrong.trim(), 300),
+    evidenceDemanded: BR.clampText(obj.evidenceDemanded.trim(), 200),
+    reason: BR.clampText(typeof obj.reason === "string" ? obj.reason : "", 300)
+  };
+};
+
+/* Who should this seat answer in the discussion round? The seat with
+   the strongest opposing card: a different recommended option and the
+   highest pillar score among those. Falls back to the highest pillar
+   other seat, then to the next seat in order, so every seat always has
+   a real target and never answers itself. */
+BR.strongestDiscussionTarget = function (state, advisorId) {
+  var latest = state.debateRounds.length > 0
+    ? state.debateRounds[state.debateRounds.length - 1].cards
+    : state.opening;
+  var mine = latest ? latest[advisorId] : null;
+  var best = null;
+  var bestPillar = -1;
+  var fallback = null;
+  var fallbackPillar = -1;
+  state.advisors.forEach(function (a) {
+    if (a.id === advisorId) { return; }
+    var card = latest ? latest[a.id] : null;
+    var pillar = card ? (card.pillarScore || 0) : 0;
+    if (pillar > fallbackPillar) { fallbackPillar = pillar; fallback = a; }
+    if (mine && card && card.recommendedId && mine.recommendedId &&
+        card.recommendedId !== mine.recommendedId && pillar > bestPillar) {
+      bestPillar = pillar;
+      best = a;
+    }
+  });
+  if (best) { return best; }
+  if (fallback) { return fallback; }
+  var idx = -1;
+  state.advisors.forEach(function (a, i) { if (a.id === advisorId) { idx = i; } });
+  if (idx >= 0 && state.advisors.length > 1) {
+    return state.advisors[(idx + 1) % state.advisors.length];
+  }
+  return null;
 };
 
 BR.validateDraft = function (obj) {
@@ -622,7 +691,7 @@ BR.debateUser = function (state, advisor, prevCards, roundNumber) {
   });
   var opp = BR.strongestOpposingPoint(state, advisor.id, prevCards);
   if (opp) {
-    lines.push("Strongest opposing point: " + opp.short + " backs option " + opp.topId + ": " + opp.reason + ". Answer it directly.");
+    lines.push("Strongest opposing point: " + opp.short + " backs option " + opp.topId + ": " + opp.reason + ". Steelman it in one sentence, then attack its weakest premise with a number or a mechanism. Concede only if it defeats your premise.");
   } else {
     lines.push("Everyone agreed with you last round. Treat that as a warning: find the weakest part of your own case and say it.");
   }
@@ -635,6 +704,40 @@ BR.debateUser = function (state, advisor, prevCards, roundNumber) {
   lines.push('"optionScores": {' + state.options.map(function (o) { return '"' + o.id + '": 0-10'; }).join(", ") + '},');
   lines.push('"pillarScore": 0-10, "confidence": 1-5, "ruinRisk": "none | possible | likely",');
   lines.push('"moved": "no, or yes, from X to Y, because ...", "conditions": ["up to three concrete checkable conditions for yes"]}');
+  return lines.join("\n");
+};
+
+BR.discussionUser = function (state, advisor, target, targetCard) {
+  var lines = [];
+  lines.push("Decision: " + state.title);
+  lines.push("Context: " + state.context);
+  lines.push("Options:");
+  state.options.forEach(function (o) { lines.push(o.id + ". " + o.label); });
+  var latest = state.debateRounds.length > 0
+    ? state.debateRounds[state.debateRounds.length - 1].cards
+    : state.opening;
+  var myCard = latest ? latest[advisor.id] : null;
+  if (target) {
+    lines.push("You are answering " + target.short + " (" + target.pillar + ") directly, not the room in general.");
+    if (targetCard) {
+      lines.push(target.short + "'s latest position: " + targetCard.stance + " on option " + targetCard.recommendedId + ". " + targetCard.reason);
+      if (targetCard.rebuttal) { lines.push(target.short + "'s latest rebuttal: " + targetCard.rebuttal); }
+      if (myCard && targetCard.recommendedId && myCard.recommendedId &&
+          targetCard.recommendedId === myCard.recommendedId) {
+        lines.push("You both back the same option. Do not agree politely: attack the weakest premise of that shared case, as if a sceptic had made it.");
+      }
+    }
+  }
+  lines.push(BR.FOCUS_LINES[state.focus] || BR.FOCUS_LINES.balanced);
+  lines.push("This is the discussion round, and it is adversarial, not polite. First steelman the target's point at its strongest, in your own words. Then attack its weakest premise with a number or a mechanism, not with tone. Concede only when beaten: if the point defeats your premise, say exactly what you concede and what it changes; if it does not, say you concede nothing and why the attack fails. End by pricing being wrong and naming the one fact or number that would settle the point. Do not repeat your opening. Return ONLY this JSON object, nothing else:");
+  lines.push('{"answerTo": "short name of the seat you are answering", "agree": "agree | disagree",');
+  lines.push('"pointAnswered": "the target point at its strongest, in your own words",');
+  lines.push('"weakPoint": "the weakest premise in that point, stated plainly",');
+  lines.push('"reply": "your attack on that premise, under 600 chars",');
+  lines.push('"concede": "exactly what you concede, or nothing and why",');
+  lines.push('"costOfBeingWrong": "what it costs if your reply is wrong",');
+  lines.push('"evidenceDemanded": "the one fact or number that would settle it",');
+  lines.push('"reason": "one line, your core argument"}');
   return lines.join("\n");
 };
 
@@ -677,7 +780,7 @@ BR.finalUser = function (state, advisor) {
   }
   lines.push('{"vote": "Endorse | Endorse with amendment | Dissent", "finalScore": 0-10 support for the resolution,');
   lines.push('"finalPillarScore": 0-10, "amendment": "what to change, or why you dissent (blank if you endorse)",');
-  lines.push('"line": "the one thing from your pillar the founder must not forget"}');
+  lines.push('"line": "the one thing from your pillar the founder must not forget, including the cost of being wrong and the kill signal"}');
   return lines.join("\n");
 };
 
@@ -710,6 +813,9 @@ BR.buildStepList = function (state) {
         steps.push({ key: "debate:" + r + ":" + a.id, label: "Debate round " + r + ": " + a.short, advisorId: a.id, round: r });
       });
     }
+    state.advisors.forEach(function (a) {
+      steps.push({ key: "discussion:" + a.id, label: "Discussion: " + a.short, advisorId: a.id });
+    });
     steps.push({ key: "draft", label: "Draft resolution" });
   }
   state.advisors.forEach(function (a) {
@@ -778,6 +884,15 @@ BR.applyStepResult = function (state, step, parsed) {
     round.cards[step.advisorId] = db;
     var adv2 = BR.advisorById(state, step.advisorId);
     state.transcript.push({ kind: "argument", speaker: adv2 ? adv2.short : step.advisorId, title: "Debate round " + step.round, body: db.rebuttal || db.reason, disagreeWith: db.disagreeWith || "" });
+    return { ok: true };
+  }
+  if (step.key.indexOf("discussion:") === 0) {
+    var dc = BR.validateDiscussion(parsed);
+    if (!dc) { return { ok: false }; }
+    if (!state.discussion) { state.discussion = {}; }
+    state.discussion[step.advisorId] = dc;
+    var advD = BR.advisorById(state, step.advisorId);
+    state.transcript.push({ kind: "discussion", speaker: advD ? advD.short : step.advisorId, title: "Discussion", body: dc.reply, answerTo: dc.answerTo, agree: dc.agree, pointAnswered: dc.pointAnswered, weakPoint: dc.weakPoint, concede: dc.concede, costOfBeingWrong: dc.costOfBeingWrong, evidenceDemanded: dc.evidenceDemanded });
     return { ok: true };
   }
   if (step.key === "draft") {
@@ -869,6 +984,11 @@ BR.buildTranscriptText = function (state) {
   lines.push("");
   state.transcript.forEach(function (t) {
     var line = "[" + t.title + "] " + t.speaker + ": " + t.body;
+    if (t.kind === "discussion" && t.answerTo) {
+      line += " [answers " + t.answerTo + ", " + (t.agree || "") + ": " + (t.pointAnswered || "") +
+        " | weak point: " + (t.weakPoint || "") + " | concedes: " + (t.concede || "") +
+        " | cost if wrong: " + (t.costOfBeingWrong || "") + " | settles it: " + (t.evidenceDemanded || "") + "]";
+    }
     var served = t.stepKey && state.servedBy ? state.servedBy[t.stepKey] : null;
     if (served && served.provider && served.model &&
         (served.provider !== state.provider || served.model !== state.model)) {
@@ -928,6 +1048,17 @@ BR.buildMarkdown = function (state) {
     lines.push("Amendments from endorsing seats are carried when the resolution passes; dissenting amendments go to the minority report.");
     v.amendments.forEach(function (am) {
       lines.push("- " + am.short + " (" + am.vote + "): " + am.amendment + " [" + (am.adopted ? "Adopted" : "Not adopted") + "] " + am.reason);
+    });
+  }
+  var discussionEntries = state.transcript.filter(function (t) { return t.kind === "discussion"; });
+  if (discussionEntries.length > 0) {
+    lines.push("");
+    lines.push("## Discussion");
+    lines.push("");
+    lines.push("Each seat answers one other seat's actual point, after the debate rounds and before the draft. Each reply attacks a weak premise, concedes only when beaten, prices being wrong, and names the evidence that would settle it.");
+    discussionEntries.forEach(function (t) {
+      lines.push("- " + t.speaker + " answers " + t.answerTo + " (" + t.agree + " on: " + t.pointAnswered + "): " + t.body);
+      lines.push("  Weak point: " + (t.weakPoint || "") + " | Concedes: " + (t.concede || "") + " | Cost if wrong: " + (t.costOfBeingWrong || "") + " | Settles it: " + (t.evidenceDemanded || ""));
     });
   }
   if (d) {
