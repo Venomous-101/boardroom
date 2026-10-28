@@ -362,10 +362,12 @@ module.exports = async function handler(req, res) {
     send(res, 200, { ok: true, text: fallback.text, servedBy: { provider: "openrouter", model: fallback.servedModel } });
     return;
   }
-  /* Chain exhausted: report the primary failure, flagged, so the page
-     can say the free fallbacks ran out too. When the primary had no
-     HTTP status (timeout or unreachable), report the fallback
-     outcome instead, still flagged. */
+  /* Chain exhausted: report the primary failure, flagged, plus the
+     exact fallback status and truncated fallback body, so the page
+     can say what the fallback actually returned instead of only
+     "exhausted". When the primary had no HTTP status (timeout or
+     unreachable), report the fallback outcome instead, still
+     flagged, with the same fallback fields. */
   if (primary.timeout || primary.unreachable || primary.deadline) {
     if (fallback.timeout) {
       fail(res, 504, "timeout", "The provider took too long to respond.");
@@ -375,10 +377,10 @@ module.exports = async function handler(req, res) {
       fail(res, 502, "provider_unreachable", "The provider could not be reached.");
       return;
     }
-    send(res, 200, { ok: false, status: fallback.status, body: fallback.body, fallbackExhausted: true });
+    send(res, 200, { ok: false, status: fallback.status, body: fallback.body, fallbackExhausted: true, fallbackStatus: fallback.status, fallbackBody: fallback.body });
     return;
   }
-  send(res, 200, { ok: false, status: primary.status, body: primary.body, fallbackExhausted: true });
+  send(res, 200, { ok: false, status: primary.status, body: primary.body, fallbackExhausted: true, fallbackStatus: fallback.status, fallbackBody: fallback.body });
 };
 
 /* When a fallback leg follows, the Groq attempt is capped at 25
