@@ -905,13 +905,11 @@ async function main() {
       return c1.innerHTML.indexOf("Old reason.") !== -1 && c1.innerHTML.indexOf("Answers") === -1 &&
         c2.innerHTML.indexOf("Operator") !== -1;
     })());
-  assert("playback helpers split words, cycle mouth states, and lean by order",
+  assert("playback helpers split words and cycle mouth states",
     eq(BR.splitWords("  hello   world  "), ["hello", "world"]) &&
     BR.mouthClassFor(0) === "mouth-closed" && BR.mouthClassFor(1) === "mouth-mid" &&
     BR.mouthClassFor(2) === "mouth-open" && BR.mouthClassFor(3) === "mouth-mid" &&
-    BR.mouthClassFor(4) === "mouth-closed" &&
-    BR.leanClassFor(2, 0) === "lean-left" && BR.leanClassFor(2, 5) === "lean-right" &&
-    BR.leanClassFor(2, 2) === "" && BR.leanClassFor(2, null) === "");
+    BR.mouthClassFor(4) === "mouth-closed");
   assert("mouth rule varies by word and falls back to the cycle without one",
     BR.mouthClassFor(0, "apple") === "mouth-open" && BR.mouthClassFor(0, "mom") === "mouth-closed" &&
     BR.mouthClassFor(0, "sun") === "mouth-mid" && BR.mouthClassFor(0, "") === "mouth-closed" &&
@@ -919,15 +917,16 @@ async function main() {
   assert("look direction follows table geometry and stays neutral straight ahead",
     BR.lookDirectionFor(0, 2, 8) === "right" && BR.lookDirectionFor(0, 6, 8) === "left" &&
     BR.lookDirectionFor(0, 0, 8) === "" && BR.lookDirectionFor(0, 4, 8) === "");
-  assert("reactions follow card movement toward or away from the previous speaker",
-    BR.reactionFor("B", "A", "A") === "nod" && BR.reactionFor("A", "B", "A") === "shake" &&
-    BR.reactionFor("A", "A", "A") === "" && BR.reactionFor("A", "B", "C") === "" &&
-    BR.reactionFor("", "A", "A") === "");
-  assert("arrow endpoints land on seat centres in stage pixels",
+  assert("reactions land on the addressed seat from its own vote or card, never from tone",
+    BR.targetReactionFor("A", "A", "") === "nod" && BR.targetReactionFor("A", "B", "") === "" &&
+    BR.targetReactionFor("A", "B", "Endorse") === "nod" && BR.targetReactionFor("A", "B", "Endorse with amendment") === "nod" &&
+    BR.targetReactionFor("A", "A", "Dissent") === "shake" && BR.targetReactionFor("A", "B", "Something else") === "");
+  assert("interaction arc stops at seat edges, not centres, and rejects identical seats",
     (function () {
-      var pts = BR.arrowPointsFor(0, 2, 8, 800, 560);
-      return !!pts && pts.x1 === 400 && pts.y1 === 73 && pts.x2 === 736 && pts.y2 === 280 &&
-        BR.arrowPointsFor(0, 0, 8, 800, 560) === null;
+      var d = BR.arcPathFor(0, 2, 8, 800, 560);
+      var m = d ? d.match(/M (\d+) (\d+) Q (\d+) (\d+) (\d+) (\d+)/) : null;
+      return !!m && !(m[1] === "400" && m[2] === "73") && !(m[5] === "736" && m[6] === "280") &&
+        BR.arcPathFor(0, 0, 8, 800, 560) === null && BR.arcPathFor(0, 2, 8, 0, 560) === null;
     })());
   assert("history dates render in readable local form without an invented timezone",
     (function () {
@@ -1011,7 +1010,7 @@ async function main() {
   assert("stage CSS has mouth, lean, and voice toggle rules",
     (function () {
       const css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
-      return css.indexOf(".thumb.mouth-open") !== -1 && css.indexOf(".stage-seat.lean-right") !== -1 &&
+      return css.indexOf(".thumb.mouth-open") !== -1 && css.indexOf(".stage-seat.playing-lean") !== -1 &&
         css.indexOf(".stage-seat.lean-toward") !== -1 && css.indexOf(".stage-round") !== -1 &&
         css.indexOf(".round-table") !== -1 && css.indexOf(".voice-toggle-label") !== -1 && css.indexOf("prefers-reduced-motion") !== -1;
     })());
@@ -1079,6 +1078,138 @@ async function main() {
       if (oldFetch === undefined) { delete sandbox.fetch; } else { sandbox.fetch = oldFetch; }
     }
   })();
+
+  /* ---------- Live reactive character states (30 Oct rebuild) ---------- */
+  assert("character state machine gives exactly one state per seat, thinking during a wait",
+    (function () {
+      const states = BR.charStatesFor(BR.PERSONAS, "offer", null);
+      const ids = Object.keys(states);
+      return ids.length === BR.PERSONAS.length && states.offer === "thinking" &&
+        BR.PERSONAS.every(function (p) { return BR.CHAR_STATES.indexOf(states[p.id]) !== -1; }) &&
+        BR.PERSONAS.filter(function (p) { return p.id !== "offer"; }).every(function (p) { return states[p.id] === "listening"; });
+    })());
+  assert("character state machine switches thinking to speaking when the line lands",
+    (function () {
+      const states = BR.charStatesFor(BR.PERSONAS, null, "offer");
+      const idle = BR.charStatesFor(BR.PERSONAS, null, null);
+      return states.offer === "speaking" && BR.charStateFor({ offer: "reacting" }, "offer") === "reacting" &&
+        BR.charStateFor({ offer: "not-a-state" }, "offer") === "idle" &&
+        BR.PERSONAS.every(function (p) { return idle[p.id] === "idle"; });
+    })());
+  assert("mouth overlay coordinates exist for all 8 portrait seats and sit on the face",
+    (function () {
+      const known = ["operator", "offer", "investor", "marketer", "philosopher", "founder", "saas", "eos"];
+      return known.every(function (id) {
+        const pos = BR.MOUTH_POS[id];
+        const thumb = BR.avatarThumb({ id: id, color: "#111111", initials: "X" }, "large");
+        return !!pos && pos.x >= 40 && pos.x <= 60 && pos.y >= 30 && pos.y <= 55 &&
+          thumb.indexOf("--mouth-x:" + pos.x + "%") !== -1 && thumb.indexOf("--mouth-y:" + pos.y + "%") !== -1 &&
+          thumb.indexOf('class="mouth"') !== -1;
+      }) && BR.avatarThumb({ id: "custom", color: "#111111", initials: "C" }, "large").indexOf('class="mouth"') === -1;
+    })());
+  assert("thinking stage renders a think bubble, a Thinking label, and a ponder state, never a speaking seat",
+    (function () {
+      const s = makeDebate(1);
+      s.director = { weights: {}, cruxes: [], brief: "B.", assumptions: [] };
+      BR.PERSONAS.forEach(function (p) { s.director.weights[p.id] = { weight: 1, reason: "R." }; });
+      s.final = {};
+      const c = { innerHTML: "" };
+      BR.renderStage(c, s, null, null, BR.charStatesFor(BR.PERSONAS, "offer", null));
+      return c.innerHTML.indexOf("state-thinking") !== -1 && c.innerHTML.indexOf("think-bubble") !== -1 &&
+        c.innerHTML.indexOf(">Thinking<") !== -1 && c.innerHTML.indexOf("speaking") === -1 &&
+        c.innerHTML.indexOf("round-arrow-line") === -1;
+    })());
+  assert("interaction arc is drawn on answer and rebuttal lines and removed when no line is live",
+    (function () {
+      const s = makeDebate(1);
+      s.director = { weights: {}, cruxes: [], brief: "B.", assumptions: [] };
+      BR.PERSONAS.forEach(function (p) { s.director.weights[p.id] = { weight: 1, reason: "R." }; });
+      s.final = {};
+      const c = { innerHTML: "" };
+      BR.renderStage(c, s, "operator", { from: BR.PERSONAS[0], to: BR.PERSONAS[1], kind: "discussion" },
+        BR.charStatesFor(BR.PERSONAS, null, "operator"));
+      const d = BR.arcPathFor(0, 1, 8, 800, 560);
+      const c2 = { innerHTML: "" };
+      BR.renderStage(c2, s, null, { from: BR.PERSONAS[0], to: BR.PERSONAS[1], kind: "discussion" },
+        BR.charStatesFor(BR.PERSONAS, null, null));
+      return c.innerHTML.indexOf("round-arrow-line") !== -1 && c.innerHTML.indexOf("<path") !== -1 &&
+        c.innerHTML.indexOf("state-speaking") !== -1 && c.innerHTML.indexOf("addressed") !== -1 &&
+        !!d && d.indexOf("M ") === 0 && d.indexOf(" Q ") !== -1 && BR.arcPathFor(0, 0, 8, 800, 560) === null &&
+        c2.innerHTML.indexOf("round-arrow-line") === -1;
+    })());
+  assert("reduced motion shuts down every new character animation in CSS",
+    (function () {
+      const css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
+      const block = css.slice(css.indexOf("@media (prefers-reduced-motion: reduce)"));
+      return block.indexOf(".stage-seat.playing") !== -1 && block.indexOf(".thumb.talking") !== -1 &&
+        block.indexOf(".stage-seat.state-thinking") !== -1 && block.indexOf(".round-arrow-line") !== -1 &&
+        block.indexOf("think-bubble") !== -1;
+    })());
+  assert("speaking lift and stage clearance stay bounded: no layout size animation, 120px desktop margin kept",
+    (function () {
+      const css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
+      const speak = css.slice(css.indexOf(".stage-seat.speaking"), css.indexOf(".stage-seat.speaking") + 600);
+      return css.indexOf("margin: 12px 0 120px") !== -1 && speak.indexOf("translateY(-16px)") !== -1 &&
+        speak.indexOf("width:") === -1 && speak.indexOf("height:") === -1 && speak.indexOf("font-size:") === -1;
+    })());
+  assert("character CSS has no duplicate animation rules for the new states",
+    (function () {
+      const css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
+      const count = function (name) { return (css.match(new RegExp(name, "g")) || []).length; };
+      return count("stage\\.spotlight \\.stage-seat\\.dim") === 0 && count("\\.rebuttal-arrow") === 0 &&
+        count("\\.tx-rebuts \\{") === 1;
+    })());
+
+  /* ---------- Refiner fixes: awaited playback, live-pair gating, thinking spotlight ---------- */
+  await (async function () {
+    const s = makeDebate(1);
+    const seen = [];
+    let flag = false;
+    s.onStepDone = function () {
+      return new Promise(function (res) { setTimeout(function () { flag = true; res(); }, 5); });
+    };
+    const canned = makeCanned({});
+    const wrapped = function (state, step) { seen.push(flag); return canned.fn(state, step); };
+    const res = await BR.runDebate(s, wrapped, function () {});
+    assert("debate loop awaits the step-done handler before the next step starts",
+      res.ok && seen.length > 2 && seen.slice(1).every(function (v) { return v === true; }),
+      "seen=" + JSON.stringify(seen.slice(0, 5)));
+  })();
+  assert("arc, addressed highlight, and strip show only for the live speaker's own pair",
+    (function () {
+      const s = makeDebate(1);
+      s.director = { weights: {}, cruxes: [], brief: "B.", assumptions: [] };
+      BR.PERSONAS.forEach(function (p) { s.director.weights[p.id] = { weight: 1, reason: "R." }; });
+      s.final = {};
+      const stale = { innerHTML: "" };
+      BR.renderStage(stale, s, "offer", { from: BR.PERSONAS[0], to: BR.PERSONAS[1], kind: "argument" },
+        BR.charStatesFor(BR.PERSONAS, null, "offer"));
+      const live = { innerHTML: "" };
+      BR.renderStage(live, s, "operator", { from: BR.PERSONAS[0], to: BR.PERSONAS[1], kind: "argument" },
+        BR.charStatesFor(BR.PERSONAS, null, "operator"));
+      return stale.innerHTML.indexOf("round-arrow-line") === -1 && stale.innerHTML.indexOf("addressed") === -1 &&
+        stale.innerHTML.indexOf("rebuttal-strip") === -1 && live.innerHTML.indexOf("round-arrow-line") !== -1 &&
+        live.innerHTML.indexOf("rebuttal-strip") !== -1;
+    })());
+  assert("thinking spotlights the room and dims listeners, not just the speaking phase",
+    (function () {
+      const s = makeDebate(1);
+      s.director = { weights: {}, cruxes: [], brief: "B.", assumptions: [] };
+      BR.PERSONAS.forEach(function (p) { s.director.weights[p.id] = { weight: 1, reason: "R." }; });
+      s.final = {};
+      const c = { innerHTML: "" };
+      BR.renderStage(c, s, null, null, BR.charStatesFor(BR.PERSONAS, "offer", null));
+      return c.innerHTML.indexOf("spotlight") !== -1 && c.innerHTML.indexOf("state-thinking") !== -1 &&
+        c.innerHTML.indexOf(" dim") !== -1;
+    })());
+  assert("director and draft waits render a Director working row instead of an idle room",
+    (function () {
+      const s = makeDebate(1);
+      s.transcript = [{ kind: "director", speaker: "Director", title: "Director brief", body: "B." }];
+      const c = { innerHTML: "" };
+      BR.renderTranscript(c, s, null, "The Director");
+      return c.innerHTML.indexOf("The Director") !== -1 && c.innerHTML.indexOf("is thinking") !== -1;
+    })());
 
   /* ---------- Server function: OpenRouter fallback ---------- */
   await serverTests();
