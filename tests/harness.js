@@ -688,6 +688,36 @@ async function main() {
     BR.validateDiscussion({ answerTo: "Offer", agree: "agree", pointAnswered: "P.", weakPoint: "W.", reply: "R.", costOfBeingWrong: "C.", evidenceDemanded: "E." }) === null &&
     BR.validateDiscussion({ answerTo: "Offer", agree: "agree", pointAnswered: "P.", weakPoint: "W.", reply: "R.", concede: "N.", evidenceDemanded: "E." }) === null &&
     BR.validateDiscussion({ answerTo: "Offer", agree: "agree", pointAnswered: "P.", weakPoint: "W.", reply: "R.", concede: "N.", costOfBeingWrong: "C." }) === null);
+  assert("discussion validation accepts concession and weak premise aliases",
+    (function () {
+      var v = BR.validateDiscussion({ answerTo: "Offer", agree: "disagree", pointAnswered: "P.", steelman: "Offer's point at its strongest, fairly stated.", weakestPremise: "W.", reply: "R.", concession: "I concede the timing point because the cash data beats my case.", costOfBeingWrong: "C.", evidenceDemanded: "E." });
+      return !!v && v.weakPoint === "W." && v.concede.indexOf("timing point") !== -1;
+    })());
+  assert("discussion target resolution turns topic labels into their owning seats",
+    (function () {
+      var s = makeDebate(1);
+      s.discussionTargets = { operator: "offer", philosopher: "offer", founder: "offer" };
+      var lev = BR.resolveDiscussionTarget(s, "operator", "Leverage");
+      var ops = BR.resolveDiscussionTarget(s, "founder", "Operations");
+      var real = BR.resolveDiscussionTarget(s, "operator", "Offer");
+      var unknown = BR.resolveDiscussionTarget(s, "operator", "Zebra");
+      var self = BR.resolveDiscussionTarget(s, "philosopher", "Leverage");
+      return lev && lev.id === "philosopher" && ops && ops.id === "eos" &&
+        real && real.id === "offer" && unknown && unknown.id === "offer" &&
+        self && self.id === "offer" && self.id !== "philosopher";
+    })());
+  assert("discussion step stores a resolved seat target, never a topic label",
+    (function () {
+      var s = makeDebate(1);
+      s.opening = {};
+      BR.PERSONAS.forEach(function (p) {
+        s.opening[p.id] = { stance: "Yes", recommendedId: p.id === "offer" ? "B" : "A", optionScores: { A: 7, B: 6, C: 3 }, pillarScore: p.id === "offer" ? 9 : 5, confidence: 4, ruinRisk: "none", door: "two-way", reason: "R.", changeMind: "N." };
+      });
+      var parsed = { answerTo: "Leverage", agree: "disagree", pointAnswered: "P.", steelman: "The point at its strongest, fairly stated here.", weakPoint: "W.", reply: "R.", concede: "Nothing conceded: the attack fails because the premise holds.", costOfBeingWrong: "C.", evidenceDemanded: "E." };
+      var applied = BR.applyStepResult(s, { key: "discussion:operator", advisorId: "operator" }, parsed);
+      var entry = s.transcript[s.transcript.length - 1];
+      return applied.ok === true && entry.answerTo === "Philosopher" && entry.targetId === "philosopher";
+    })());
   assert("discussion prompt attacks the shared case when everyone agrees",
     (function () {
       const sU = makeDebate(1);
@@ -843,6 +873,101 @@ async function main() {
     BR.mouthClassFor(4) === "mouth-closed" &&
     BR.leanClassFor(2, 0) === "lean-left" && BR.leanClassFor(2, 5) === "lean-right" &&
     BR.leanClassFor(2, 2) === "" && BR.leanClassFor(2, null) === "");
+  assert("mouth rule varies by word and falls back to the cycle without one",
+    BR.mouthClassFor(0, "apple") === "mouth-open" && BR.mouthClassFor(0, "mom") === "mouth-closed" &&
+    BR.mouthClassFor(0, "sun") === "mouth-mid" && BR.mouthClassFor(0, "") === "mouth-closed" &&
+    BR.mouthClassFor(2) === "mouth-open");
+  assert("look direction follows table geometry and stays neutral straight ahead",
+    BR.lookDirectionFor(0, 2, 8) === "right" && BR.lookDirectionFor(0, 6, 8) === "left" &&
+    BR.lookDirectionFor(0, 0, 8) === "" && BR.lookDirectionFor(0, 4, 8) === "");
+  assert("reactions follow card movement toward or away from the previous speaker",
+    BR.reactionFor("B", "A", "A") === "nod" && BR.reactionFor("A", "B", "A") === "shake" &&
+    BR.reactionFor("A", "A", "A") === "" && BR.reactionFor("A", "B", "C") === "" &&
+    BR.reactionFor("", "A", "A") === "");
+  assert("arrow endpoints land on seat centres in stage pixels",
+    (function () {
+      var pts = BR.arrowPointsFor(0, 2, 8, 800, 560);
+      return !!pts && pts.x1 === 400 && pts.y1 === 34 && pts.x2 === 736 && pts.y2 === 280 &&
+        BR.arrowPointsFor(0, 0, 8, 800, 560) === null;
+    })());
+  assert("history dates render in readable local form without an invented timezone",
+    (function () {
+      var f = BR.formatHistoryDate("2026-10-29T14:09:00.000Z");
+      return f !== "2026-10-29T14:09:00.000Z" && f.indexOf("2026") !== -1 &&
+        BR.formatHistoryDate("not-a-date") === "not-a-date";
+    })());
+  assert("concessions render as their own line only when the card carries one",
+    (function () {
+      var s = makeDebate(1);
+      s.transcript = [{
+        kind: "discussion", speaker: "Operator", title: "Discussion", body: "Reply.",
+        answerTo: "Offer", agree: "disagree", pointAnswered: "P.",
+        steelman: "Offer's point at its strongest, fairly stated.", weakPoint: "W.",
+        concede: "I concede the timing point because the cash data beats my case.",
+        costOfBeingWrong: "C.", evidenceDemanded: "E."
+      }];
+      var c1 = { innerHTML: "" };
+      BR.renderTranscript(c1, s, null);
+      var s2 = makeDebate(1);
+      s2.transcript = [{
+        kind: "discussion", speaker: "Operator", title: "Discussion", body: "Reply.",
+        answerTo: "Offer", agree: "disagree", pointAnswered: "P.",
+        steelman: "Offer's point at its strongest, fairly stated.", weakPoint: "W.",
+        concede: "", costOfBeingWrong: "C.", evidenceDemanded: "E."
+      }];
+      var c2 = { innerHTML: "" };
+      BR.renderTranscript(c2, s2, null);
+      var s3 = makeDebate(1);
+      s3.transcript = [{
+        kind: "argument", speaker: "Operator", title: "Debate round 1", body: "Rebuttal.",
+        disagreeWith: "Offer", concede: "I concede the timing point because the cash data beats my case."
+      }];
+      var c3 = { innerHTML: "" };
+      BR.renderTranscript(c3, s3, null);
+      return c1.innerHTML.indexOf("Concedes: I concede the timing point") !== -1 &&
+        c2.innerHTML.indexOf("Concedes:") === -1 &&
+        c3.innerHTML.indexOf("Concedes: I concede the timing point") !== -1;
+    })());
+  assert("legacy discussion entries with a topic label render as the owning seat",
+    (function () {
+      var s = makeDebate(1);
+      s.transcript = [{
+        kind: "discussion", speaker: "Operator", title: "Discussion", body: "Reply.",
+        answerTo: "Leverage", agree: "disagree", pointAnswered: "P.",
+        steelman: "The point at its strongest, fairly stated.", weakPoint: "W.",
+        concede: "Nothing conceded: the attack fails because the premise holds.",
+        costOfBeingWrong: "C.", evidenceDemanded: "E."
+      }];
+      var c = { innerHTML: "" };
+      BR.renderTranscript(c, s, null);
+      var tx = BR.buildTranscriptText(s);
+      return c.innerHTML.indexOf("Answers Philosopher") !== -1 &&
+        c.innerHTML.indexOf("Answers Leverage") === -1 &&
+        tx.indexOf("answers Philosopher") !== -1;
+    })());
+  assert("stage renders look direction and an addressed target seat",
+    (function () {
+      var s = makeDebate(1);
+      var c = { innerHTML: "" };
+      BR.renderStage(c, s, "operator", { from: BR.PERSONAS[0], to: BR.PERSONAS[1], kind: "argument" });
+      return c.innerHTML.indexOf("look-right") !== -1 && c.innerHTML.indexOf("addressed") !== -1 &&
+        c.innerHTML.indexOf("look-left") !== -1 && c.innerHTML.indexOf("eyelid") !== -1 &&
+        c.innerHTML.indexOf('data-from-idx="0"') !== -1;
+    })());
+  assert("character CSS has eyelid, look, reaction, and scrolling table rules, and no transition all",
+    (function () {
+      const css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
+      return css.indexOf(".thumb .eyelid") !== -1 && css.indexOf(".stage-seat.look-left") !== -1 &&
+        css.indexOf(".thumb-wrap.react-nod") !== -1 && css.indexOf(".table-scroll") !== -1 &&
+        css.indexOf("transition: all") === -1;
+    })());
+  assert("page has counters, form errors, collapsed explanation, and a div stepper holder",
+    (function () {
+      const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+      return html.indexOf('id="count-title"') !== -1 && html.indexOf('id="count-context"') !== -1 &&
+        html.indexOf('id="form-errors"') !== -1 && html.indexOf("How a debate works") !== -1 &&
+        html.indexOf('<div id="stepper">') !== -1;
+    })());
   assert("voice is off by default", BR.VOICE_ENABLED_DEFAULT === false);
   assert("stage CSS has mouth, lean, and voice toggle rules",
     (function () {
