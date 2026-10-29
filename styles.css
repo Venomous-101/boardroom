@@ -156,7 +156,7 @@ button:disabled { opacity: 0.55; cursor: default; }
   z-index: 1;
   pointer-events: none;
 }
-.stage-round.spotlight .stage-seat.dim { opacity: 0.35; }
+.stage-round.spotlight .stage-seat.dim, .stage-round.spotlight .stage-seat.playing-dim { opacity: 0.35; }
 .stage-seat {
   position: relative;
   width: 144px; text-align: center;
@@ -165,20 +165,23 @@ button:disabled { opacity: 0.55; cursor: default; }
   cursor: pointer;
   transition: transform 0.2s ease;
 }
-.stage-seat.addressed { border-color: #e8a33d; background: #1a222c; }
-.stage-seat.dim { opacity: 0.45; }
-.stage.spotlight .stage-seat.dim { opacity: 0.35; }
-.stage-seat.speaking {
+/* Addressed seat brightens and turns, never grows: border and
+   filter only, so it cannot push into the strip or disclaimer. */
+.stage-seat.addressed, .stage-seat.playing-addressed { border-color: #e8a33d; background: #1a222c; filter: brightness(1.18); }
+.stage-seat.dim, .stage-seat.playing-dim { opacity: 0.45; }
+/* Speaking seat: a visible lift, 8 to 16px, on transform only, plus
+   its seat-color ring. .playing mirrors .speaking for click-to-
+   replay, where no fresh render runs. */
+.stage-seat.speaking, .stage-seat.playing {
   border-color: var(--seat-color, #e8a33d);
   outline: 2px solid var(--seat-color, #e8a33d);
   background: #1a222c;
-  transform: translateY(-6px);
   box-shadow: 0 0 0 2px var(--seat-color, #e8a33d), 0 0 24px var(--seat-color, #e8a33d);
-  animation: seatbob 2.4s ease-in-out infinite;
+  animation: speaklift 1.6s ease-in-out infinite;
 }
-@keyframes seatbob {
-  0%, 100% { transform: translateY(-6px); }
-  50% { transform: translateY(-10px); }
+@keyframes speaklift {
+  0%, 100% { transform: translateY(-8px); }
+  50% { transform: translateY(-16px); }
 }
 .stage-seat:hover { transform: translateY(-4px); }
 .stage-seat:hover .seat-card, .stage-seat:focus-within .seat-card { display: block; }
@@ -202,8 +205,10 @@ button:disabled { opacity: 0.55; cursor: default; }
 .seat-card strong { display: block; font-size: 14px; }
 .seat-card span { display: block; color: #9aa7b4; font-size: 12px; margin-top: 4px; }
 
-/* Vote stamp overlaid on a bust after the final vote. */
-.thumb-wrap { position: relative; display: inline-block; }
+/* Vote stamp overlaid on a bust after the final vote. The wrapper
+   also carries look, reaction, and ponder motion, so its transition
+   lives here, once, not in a second rule below. */
+.thumb-wrap { position: relative; display: inline-block; transition: transform 180ms ease; }
 .vote-stamp {
   position: absolute; right: -6px; bottom: -2px; z-index: 2;
   transform: rotate(-8deg);
@@ -214,10 +219,16 @@ button:disabled { opacity: 0.55; cursor: default; }
 .vote-stamp.amend { background: #b7791f; }
 .vote-stamp.dissent { background: #b03a2e; }
 
-/* Rebuttal arrow strip under the stage. */
+/* Rebuttal strip under the stage: words only, the arc itself lives
+   in the stage SVG above. */
 .rebuttal-strip { display: flex; gap: 10px; align-items: center; margin: 4px 0 16px; color: #c6d0da; font-size: 14px; }
-.rebuttal-strip svg { flex: none; }
-.rebuttal-arrow { flex: none; }
+/* Animated dashed interaction arc, speaker to target. Dash motion
+   only; the path itself is placed by the page in stage pixels. */
+.round-arrow-line { stroke-dasharray: 6 5; animation: dashmove 1s linear infinite; }
+@keyframes dashmove {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -11; }
+}
 
 /* Click-to-focus highlight: outline plus a tint, so the focused
    entry reads at a glance, not only on close inspection. */
@@ -264,60 +275,98 @@ button:disabled { opacity: 0.55; cursor: default; }
   transform: scaleY(0); transform-origin: top center;
 }
 .thumb.blinking .eyelid { animation: eyelid 260ms ease-in-out; }
+/* A failed portrait load hides the mouth and eyelid with the image,
+   so playback never draws a floating mouth over initials. */
+.thumb.portrait-failed .mouth, .thumb.portrait-failed .eyelid { display: none !important; }
 @keyframes eyelid {
   0% { transform: scaleY(0); }
   45% { transform: scaleY(1); }
   100% { transform: scaleY(0); }
 }
 
-/* Speaking playback: a stylised mouth bar on the portrait thumb.
-   It moves with the spoken word, not lip-sync. Hidden unless a
-   mouth state class is present. Size changes use transform only,
-   never height, so the bar never reflows the portrait. */
+/* Speaking playback: a mouth ON THE FACE, at the per-seat
+   coordinates set by the renderer (--mouth-x, --mouth-y), not at
+   the bottom of the thumb. It moves with the spoken word, not
+   lip-sync. Hidden unless a mouth state class is present. Size
+   changes use transform only, never height, so the bar never
+   reflows the portrait. At 96px a 14px open mouth is visible at
+   normal viewing distance, which the old 1 to 3px motions were not. */
 .thumb .mouth {
   display: none;
-  position: absolute; left: 50%; bottom: 12%;
-  transform: translateX(-50%) scaleY(0.15);
-  transform-origin: bottom center;
-  width: 22%; height: 12px; background: #0f1419;
-  border-radius: 4px; z-index: 2;
+  position: absolute; left: var(--mouth-x, 50%); top: var(--mouth-y, 48%);
+  transform: translate(-50%, -50%) scaleY(0.15);
+  transform-origin: center;
+  width: 18%; height: 15%; background: #7c2a2a;
+  border-radius: 7px; z-index: 2;
   transition: transform 120ms ease;
 }
-.thumb.large .mouth { width: 18%; }
-.thumb.mouth-closed .mouth { display: block; transform: translateX(-50%) scaleY(0.15); }
-.thumb.mouth-mid .mouth { display: block; transform: translateX(-50%) scaleY(0.5); }
-.thumb.mouth-open .mouth { display: block; transform: translateX(-50%) scaleY(1); }
+.thumb.mouth-closed .mouth { display: block; transform: translate(-50%, -50%) scaleY(0.15); }
+.thumb.mouth-mid .mouth { display: block; transform: translate(-50%, -50%) scaleY(0.55); }
+.thumb.mouth-open .mouth { display: block; transform: translate(-50%, -50%) scaleY(1); }
+
+/* Speaking head tilt, on the thumb itself so it composes with the
+   seat lift and the wrapper look, instead of fighting either. */
+.thumb.talking { animation: headtilt 1.4s ease-in-out infinite; }
+@keyframes headtilt {
+  0%, 100% { transform: rotate(-5deg); }
+  50% { transform: rotate(5deg); }
+}
+
+/* Thinking bubble above the thinker's head, with animated dots. */
+.think-bubble {
+  position: absolute; bottom: calc(100% + 4px); left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex; gap: 4px; align-items: center;
+  background: #1a222c; border: 1px solid #e8a33d;
+  border-radius: 999px; padding: 4px 8px; z-index: 4;
+}
+.think-bubble span { width: 7px; height: 7px; border-radius: 50%; background: #e8a33d; animation: blink 1.2s infinite; }
+.think-bubble span:nth-child(2) { animation-delay: 0.2s; }
+.think-bubble span:nth-child(3) { animation-delay: 0.4s; }
+
+/* Ponder tilt for the thinking seat: slow, visible, 6 degrees
+   either way, on the wrapper so it never fights the thumb. */
+.stage-seat.state-thinking .thumb-wrap { animation: ponder 1.6s ease-in-out infinite; }
+@keyframes ponder {
+  0%, 100% { transform: rotate(-6deg) translateY(0); }
+  50% { transform: rotate(6deg) translateY(2px); }
+}
+
+/* Fixed-height state label on the nameplate, so Thinking and
+   Speaking never push the role or status lines down. */
+.state-label { min-height: 18px; line-height: 18px; font-size: 12px; font-weight: 700; color: #e8a33d; }
 
 /* Look direction and reactions, on the thumb wrapper so they never
-   fight the thumb's own breathing animation. A look is a small
-   turn toward the speaker or the target. A nod is a short down
-   tilt, a shake is a short side-to-side turn, each driven only by
-   card movement in the debate data. */
-.thumb-wrap { transition: transform 180ms ease; }
-.stage-seat.look-left .thumb-wrap { transform: translateX(-5px) rotate(-5deg); }
-.stage-seat.look-right .thumb-wrap { transform: translateX(5px) rotate(5deg); }
-.thumb-wrap.react-nod { animation: nod 1.2s ease-in-out; }
-.thumb-wrap.react-shake { animation: shake 1.2s ease-in-out; }
+   fight the thumb's own breathing or head-tilt animation. A look
+   is a visible turn toward the speaker or the target. A nod is a
+   down tilt, a shake is a side-to-side turn, each driven only by
+   the addressed seat's vote or card data. */
+.stage-seat.look-left .thumb-wrap { transform: translateX(-8px) rotate(-7deg); }
+.stage-seat.look-right .thumb-wrap { transform: translateX(8px) rotate(7deg); }
+.thumb-wrap.react-nod { animation: nod 1.4s ease-in-out; }
+.thumb-wrap.react-shake { animation: shake 1.4s ease-in-out; }
 @keyframes nod {
   0%, 100% { transform: translateY(0) rotate(0deg); }
-  25% { transform: translateY(2px) rotate(3deg); }
+  25% { transform: translateY(4px) rotate(6deg); }
   50% { transform: translateY(0) rotate(0deg); }
-  75% { transform: translateY(2px) rotate(3deg); }
+  75% { transform: translateY(4px) rotate(6deg); }
 }
 @keyframes shake {
   0%, 100% { transform: translateX(0) rotate(0deg); }
-  25% { transform: translateX(-4px) rotate(-3deg); }
-  50% { transform: translateX(4px) rotate(3deg); }
-  75% { transform: translateX(-4px) rotate(-3deg); }
+  25% { transform: translateX(-6px) rotate(-6deg); }
+  50% { transform: translateX(6px) rotate(6deg); }
+  75% { transform: translateX(-6px) rotate(-6deg); }
 }
 
 /* Lean toward the seat being answered. Uses the CSS translate
-   property, so it composes with the speaking bob transform instead
-   of fighting it. lean-toward uses the real table vector, set as
-   --lean-dx and --lean-dy by the renderer. */
-.stage-seat.lean-left { translate: -10px 0; }
-.stage-seat.lean-right { translate: 10px 0; }
+   property, so it composes with the speaking lift instead of
+   fighting it. lean-toward is the rendered lean, set as --lean-dx
+   and --lean-dy by the renderer; playing-lean is the playback-only
+   lean, set as --play-lean-dx and --play-lean-dy, so stopping a
+   replay never strips the rendered lean. */
 .stage-seat.lean-toward { translate: var(--lean-dx, 0px) var(--lean-dy, 0px); }
+.stage-seat.playing-lean { translate: var(--play-lean-dx, 0px) var(--play-lean-dy, 0px); }
+.stage-round.playing-spotlight .stage-seat.playing-dim { opacity: 0.35; }
 
 /* Voice toggle in the debate view controls. */
 .voice-toggle-label {
@@ -327,15 +376,20 @@ button:disabled { opacity: 0.55; cursor: default; }
 .voice-toggle-label input { width: auto; margin: 0; }
 
 @media (prefers-reduced-motion: reduce) {
-  .stage-seat.speaking { animation: none; }
+  .stage-seat.speaking, .stage-seat.playing { animation: none; }
   .thumb.idle { animation: none; }
+  .thumb.talking { animation: none; }
   .thumb.talking::after { animation: none; }
   .thumb .mouth { transition: none; }
   .thumb.blinking .eyelid { animation: none; }
   .thumb-wrap.react-nod, .thumb-wrap.react-shake { animation: none; }
+  .stage-seat.state-thinking .thumb-wrap { animation: none; }
   .stage-seat.look-left .thumb-wrap, .stage-seat.look-right .thumb-wrap { transform: none; }
-  .stage-seat.lean-left, .stage-seat.lean-right, .stage-seat.lean-toward { translate: 0 0; }
-  .thinking span { animation: none; }
+  .stage-seat.lean-toward, .stage-seat.playing-lean { translate: 0 0; }
+  .stage-seat:hover { transform: none; }
+  .stage-seat, .thumb-wrap { transition: none; }
+  .thinking span, .think-bubble span { animation: none; }
+  .round-arrow-line { animation: none; }
 }
 
 /* Thinking dots, used on the speaking seat and in the transcript. */
@@ -365,11 +419,10 @@ button:disabled { opacity: 0.55; cursor: default; }
 .tx-speaker { font-weight: 800; }
 .tx-kind { color: #9aa7b4; font-size: 13px; }
 .tx-body { font-size: 15px; max-width: 72ch; overflow-wrap: anywhere; }
-.tx-rebuts { overflow-wrap: anywhere; }
 .tx-advisor { display: flex; gap: 12px; align-items: flex-start; }
 .tx-content { min-width: 0; flex: 1; }
 .tx-director { background: #1a222c; border-left: 4px solid #e8a33d; }
-.tx-rebuts { color: #9aa7b4; font-size: 13px; margin-top: 4px; }
+.tx-rebuts { overflow-wrap: anywhere; color: #9aa7b4; font-size: 13px; margin-top: 4px; }
 .tx-thinking { display: flex; gap: 12px; align-items: center; color: #c6d0da; font-size: 14px; }
 .tx-thinking .thinking { margin-top: 0; margin-left: 6px; }
 
@@ -474,7 +527,7 @@ footer {
    never squeezed off the edge or overlapped. The centre table becomes
    a full-width banner at the top of the grid. */
 @media (max-width: 700px) {
-  .stage-round { min-height: 0; display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 12px; }
+  .stage-round { min-height: 0; display: grid; grid-template-columns: repeat(2, 1fr); gap: 32px 12px; margin-bottom: 12px; }
   .round-table { position: static; transform: none; grid-column: 1 / -1; width: 100%; aspect-ratio: auto; border-radius: 12px; }
   .round-arrows { display: none; }
   .round-seat { position: static; transform: none; width: auto; }
