@@ -174,7 +174,7 @@ async function serverTests() {
   /* OpenRouter direct with a free model: requested model first, then the chain. */
   const t4 = loadServer(bothKeys, scriptFor([{ match: "openrouter.ai", make: orOk }]));
   const r4 = await callServer(t4, { provider: "openrouter", model: BR.OPENROUTER_FREE_CHAIN[2], system: "sys", user: "usr" }, "10.0.0.4");
-  const expected4 = [BR.OPENROUTER_FREE_CHAIN[2], BR.OPENROUTER_FREE_CHAIN[0], BR.OPENROUTER_FREE_CHAIN[1], BR.OPENROUTER_FREE_CHAIN[3]];
+  const expected4 = [BR.OPENROUTER_FREE_CHAIN[2], BR.OPENROUTER_FREE_CHAIN[0], BR.OPENROUTER_FREE_CHAIN[1]];
   assert("server: openrouter direct free model goes first then the chain",
     r4.body.ok === true && eq(t4.calls[0].body.models, expected4) && r4.body.servedBy.model === BR.OPENROUTER_FREE_CHAIN[2],
     JSON.stringify(t4.calls[0] && t4.calls[0].body) + " " + JSON.stringify(r4.body.servedBy));
@@ -209,8 +209,8 @@ async function serverTests() {
 
   /* Chain discipline: free only, matches the page list, head is the default. */
   const chain = t1.handler.OPENROUTER_FREE_CHAIN;
-  assert("server: chain is free only and matches the page list",
-    Array.isArray(chain) && chain.length >= 3 && chain.every(function (m) { return /:free$/.test(m); }) && eq(chain, BR.OPENROUTER_FREE_CHAIN),
+  assert("server: chain is free only, at most 3, and matches the page list",
+    Array.isArray(chain) && chain.length === 3 && chain.every(function (m) { return /:free$/.test(m); }) && eq(chain, BR.OPENROUTER_FREE_CHAIN),
     JSON.stringify(chain));
   assert("server: openrouter default model is the chain head",
     BR.PROVIDERS.openrouter.defaultModel === BR.OPENROUTER_FREE_CHAIN[0], BR.PROVIDERS.openrouter.defaultModel);
@@ -395,6 +395,15 @@ async function main() {
     state.verdict.preferredOtherwise[1].advisorId === "philosopher" &&
     state.verdict.preferredOtherwise.every(function (d) { return d.topId === "B"; }),
     JSON.stringify(state.verdict.preferredOtherwise));
+  const noDissentState = JSON.parse(JSON.stringify(state));
+  Object.keys(noDissentState.final).forEach(function (id) { noDissentState.final[id].vote = "Endorse with amendment"; });
+  const noDissentVerdict = BR.computeVerdict(noDissentState);
+  noDissentState.verdict = noDissentVerdict;
+  assert("zero dissent means no minority dissent line",
+    noDissentVerdict.votes.dissent === 0 && noDissentVerdict.minority === null &&
+    noDissentVerdict.preferredOtherwise.length === 2 &&
+    BR.buildMarkdown(noDissentState).indexOf("dissented:") === -1,
+    JSON.stringify(noDissentVerdict.votes) + " minority=" + JSON.stringify(noDissentVerdict.minority));
   assert("math line for A present", state.verdict.optionScores.A.math.indexOf("3x8") !== -1 && state.verdict.optionScores.A.math.indexOf("/ 12") !== -1 && state.verdict.optionScores.A.math.indexOf("= 6.9") !== -1, state.verdict.optionScores.A.math);
 
   const md = BR.buildMarkdown(state);
