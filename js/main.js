@@ -88,6 +88,9 @@ document.addEventListener("DOMContentLoaded", function () {
     downloadMd: $("download-md"), copyTx: $("copy-tx"), printBtn: $("print-btn"),
     voiceToggle: $("voice-toggle"),
     setupForm: $("setup-form"), debateView: $("debate-view"),
+    formErrors: $("form-errors"),
+    countTitle: $("count-title"), countContext: $("count-context"),
+    countCustomName: $("count-custom-name"), countCustomView: $("count-custom-view"),
     resumePanel: $("resume-panel"), resumeText: $("resume-text"),
     resumeDebate: $("resume-debate"), resumeDiscard: $("resume-discard"),
     consultView: $("consult-view"), consultAnswer: $("consult-answer"),
@@ -103,7 +106,47 @@ document.addEventListener("DOMContentLoaded", function () {
     BR.renderTranscript(els.transcript, currentState, speakingId);
     BR.renderKeyPoints(els.keypoints, currentState);
     BR.renderVerdict(els.verdict, currentState);
+    positionArrows();
   }
+
+  /* Arrow overlay in real pixels: after the stage renders, size the
+     SVG to the stage box and draw the speaker-to-target line between
+     the two seat centres, so the arrowhead keeps its shape at any
+     stage width. One layout read per render, never in a loop. */
+  function positionArrows() {
+    try {
+      var stageRound = els.stage.querySelector(".stage-round");
+      if (!stageRound) { return; }
+      var svg = stageRound.querySelector(".round-arrows");
+      if (!svg) { return; }
+      var rect = stageRound.getBoundingClientRect();
+      if (!rect.width || !rect.height) { return; }
+      var fromIdx = parseInt(svg.getAttribute("data-from-idx"), 10);
+      var toIdx = parseInt(svg.getAttribute("data-to-idx"), 10);
+      var total = parseInt(svg.getAttribute("data-total"), 10);
+      var pts = BR.arrowPointsFor ? BR.arrowPointsFor(fromIdx, toIdx, total, rect.width, rect.height) : null;
+      if (!pts) { return; }
+      svg.setAttribute("viewBox", "0 0 " + Math.round(rect.width) + " " + Math.round(rect.height));
+      var line = svg.querySelector(".round-arrow-line");
+      if (line) {
+        line.setAttribute("x1", pts.x1);
+        line.setAttribute("y1", pts.y1);
+        line.setAttribute("x2", pts.x2);
+        line.setAttribute("y2", pts.y2);
+        line.setAttribute("stroke-width", "2");
+      }
+    } catch (e) { /* arrow placement is cosmetic; a failure never blocks the debate */ }
+  }
+
+  var arrowRaf = null;
+  window.addEventListener("resize", function () {
+    if (arrowRaf) { return; }
+    if (window.requestAnimationFrame) {
+      arrowRaf = window.requestAnimationFrame(function () { arrowRaf = null; positionArrows(); });
+    } else {
+      positionArrows();
+    }
+  });
 
   function setStatus(text) {
     els.status.textContent = text;
@@ -119,9 +162,24 @@ document.addEventListener("DOMContentLoaded", function () {
   function showError(failed) {
     els.errorText.textContent = "Step failed: " + failed.label + ". Cause: " + failed.error.message;
     els.errorBox.classList.remove("hidden");
+    els.retryStep.textContent = "Retry " + failed.label;
     var other = nextProvider(currentState.provider);
     els.switchProvider.classList.remove("hidden");
     els.switchProvider.textContent = "Retry this step with " + BR.PROVIDERS[other].label + " instead";
+    try {
+      els.errorBox.scrollIntoView({ behavior: reducedMotionLater() ? "auto" : "smooth", block: "center" });
+    } catch (e) { /* scrolling is a convenience, never a blocker */ }
+  }
+
+  /* Reduced-motion flag is declared below with the blink timer, but
+     showError can run before that declaration executes, so this
+     helper reads the media query directly when it needs it. */
+  function reducedMotionLater() {
+    try {
+      return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    } catch (e) {
+      return false;
+    }
   }
 
   function hideError() {
@@ -193,6 +251,8 @@ document.addEventListener("DOMContentLoaded", function () {
   var playbackTimer = null;
   var playbackSeatEl = null;
   var playbackThumbEl = null;
+  var playbackBodyEl = null;
+  var playbackFullText = "";
 
   function voiceOn() {
     return !!(els.voiceToggle && els.voiceToggle.checked);
@@ -203,6 +263,13 @@ document.addEventListener("DOMContentLoaded", function () {
     try {
       if (window.speechSynthesis) { window.speechSynthesis.cancel(); }
     } catch (e) { /* ignore */ }
+    /* Restore the entry body in full: stopping mid-playback must
+       never leave a half-revealed line on screen. */
+    if (playbackBodyEl && playbackFullText) {
+      playbackBodyEl.textContent = playbackFullText;
+    }
+    playbackBodyEl = null;
+    playbackFullText = "";
     if (playbackThumbEl) {
       ["mouth-closed", "mouth-mid", "mouth-open"].forEach(function (c) { playbackThumbEl.classList.remove(c); });
       playbackThumbEl = null;
@@ -217,16 +284,18 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   }
 
-  function playLastEntry() {
+  /* Play one transcript entry word by word: the speaker's mouth
+     moves with each word, and the seat leans toward the seat it
+     answers, when there is one. Used for the latest line after a
+     step, and for a seat's latest line when that seat is clicked or
+     focused. Under reduced motion the full text stays on screen and
+     no mouth cycling runs; voice still speaks when the toggle is on. */
+  function playEntry(entryEl) {
     stopPlayback();
-    if (!currentState || !currentState.transcript || currentState.transcript.length === 0) { return; }
-    var last = currentState.transcript[currentState.transcript.length - 1];
-    var entries = els.transcript.querySelectorAll(".tx-entry");
-    if (entries.length === 0) { return; }
-    var entryEl = entries[entries.length - 1];
+    if (!entryEl) { return; }
     var bodyEl = entryEl.querySelector(".tx-body");
     if (!bodyEl) { return; }
-    var fullText = last.body || bodyEl.textContent || "";
+    var fullText = bodyEl.textContent || "";
     var words = BR.splitWords ? BR.splitWords(fullText) : fullText.split(/\s+/).filter(Boolean);
     if (words.length === 0) { return; }
     if (voiceOn()) {
@@ -244,13 +313,13 @@ document.addEventListener("DOMContentLoaded", function () {
       playbackSeatEl = seatEl;
       var thumbEl = seatEl.querySelector(".thumb");
       if (thumbEl) { playbackThumbEl = thumbEl; }
-      var targetShort = last.answerTo || last.disagreeWith || "";
+      var targetShort = entryEl.getAttribute("data-answer-to") || entryEl.getAttribute("data-disagree-with") || "";
       var targetId = "";
-      if (targetShort) {
+      if (targetShort && currentState) {
         var targetAdv = BR.advisorByShort(currentState, targetShort);
         if (targetAdv) { targetId = targetAdv.id; }
       }
-      if (targetId) {
+      if (targetId && currentState) {
         var sIdx = -1;
         var tIdx = -1;
         currentState.advisors.forEach(function (a, i) {
@@ -267,13 +336,15 @@ document.addEventListener("DOMContentLoaded", function () {
     }
     var interval = Math.max(55, Math.min(180, Math.round(9000 / words.length)));
     var i = 0;
+    playbackBodyEl = bodyEl;
+    playbackFullText = fullText;
     bodyEl.textContent = "";
     playbackTimer = setInterval(function () {
       i += 1;
       bodyEl.textContent = words.slice(0, i).join(" ");
       if (playbackThumbEl) {
         ["mouth-closed", "mouth-mid", "mouth-open"].forEach(function (c) { playbackThumbEl.classList.remove(c); });
-        playbackThumbEl.classList.add(BR.mouthClassFor(i - 1));
+        playbackThumbEl.classList.add(BR.mouthClassFor(i - 1, words[i - 1]));
       }
       if (i >= words.length) {
         bodyEl.textContent = fullText;
@@ -282,14 +353,80 @@ document.addEventListener("DOMContentLoaded", function () {
     }, interval);
   }
 
+  function playLastEntry() {
+    if (!currentState || !currentState.transcript || currentState.transcript.length === 0) { return; }
+    var entries = els.transcript.querySelectorAll(".tx-entry");
+    if (entries.length === 0) { return; }
+    playEntry(entries[entries.length - 1]);
+  }
+
+  var reactionTimer = null;
+
+  /* Data-driven reaction after a debate step: the seat that just
+     spoke nods when its new card moves onto the previous speaker's
+     option, shakes when it moves off it, and stays neutral otherwise.
+     Only debate steps carry a new card, so other steps never react. */
+  function applyReaction() {
+    if (reducedMotion || !currentState) { return; }
+    if (reactionTimer) { clearTimeout(reactionTimer); reactionTimer = null; }
+    var tx = currentState.transcript;
+    if (!tx || tx.length === 0) { return; }
+    var last = tx[tx.length - 1];
+    if (last.kind !== "argument") { return; }
+    var roundMatch = (last.title || "").match(/Debate round (\d+)/);
+    if (!roundMatch) { return; }
+    var round = parseInt(roundMatch[1], 10);
+    var speaker = BR.advisorByShort(currentState, last.speaker);
+    if (!speaker) { return; }
+    var prevEntry = null;
+    for (var i = tx.length - 2; i >= 0; i--) {
+      if (tx[i].speaker && tx[i].speaker !== "Director" && tx[i].speaker !== last.speaker) { prevEntry = tx[i]; break; }
+    }
+    if (!prevEntry) { return; }
+    var prevSpeaker = BR.advisorByShort(currentState, prevEntry.speaker);
+    if (!prevSpeaker) { return; }
+    var prevCard = round > 1
+      ? (currentState.debateRounds[round - 2] ? currentState.debateRounds[round - 2].cards[speaker.id] : null)
+      : currentState.opening[speaker.id];
+    var newCard = currentState.debateRounds[round - 1] ? currentState.debateRounds[round - 1].cards[speaker.id] : null;
+    var prevSpeakerCard = BR.latestCardFor(currentState, prevSpeaker.id);
+    if (!prevCard || !newCard || !prevSpeakerCard || !prevSpeakerCard.card) { return; }
+    var reaction = BR.reactionFor ? BR.reactionFor(prevCard.recommendedId, newCard.recommendedId, prevSpeakerCard.card.recommendedId) : "";
+    if (!reaction) { return; }
+    var seatEl = els.stage.querySelector('[data-seat-id="' + speaker.id + '"]');
+    if (!seatEl) { return; }
+    var wrap = seatEl.querySelector(".thumb-wrap");
+    if (!wrap) { return; }
+    wrap.classList.add("react-" + reaction);
+    reactionTimer = setTimeout(function () {
+      wrap.classList.remove("react-nod");
+      wrap.classList.remove("react-shake");
+      reactionTimer = null;
+    }, 1300);
+  }
+
   function onStepDone() {
     speakingId = null;
+    var nearBottom = false;
+    try {
+      nearBottom = (window.scrollY + window.innerHeight) >= (document.body.scrollHeight - 240);
+    } catch (e) { /* ignore */ }
     renderAll();
+    applyReaction();
     playLastEntry();
+    if (nearBottom) {
+      try {
+        var entries = els.transcript.querySelectorAll(".tx-entry");
+        if (entries.length > 0) {
+          entries[entries.length - 1].scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "end" });
+        }
+      } catch (e) { /* ignore */ }
+    }
   }
 
   function runCurrent() {
     running = true;
+    if (els.start) { els.start.disabled = true; }
     stopPlayback();
     hideError();
     setStatus("Debate running.");
@@ -301,6 +438,7 @@ document.addEventListener("DOMContentLoaded", function () {
     };
     return BR.runDebate(currentState, callFn, onProgress).then(function (res) {
       running = false;
+      if (els.start) { els.start.disabled = false; }
       speakingId = null;
       renderAll();
       if (res.ok) {
@@ -373,6 +511,7 @@ document.addEventListener("DOMContentLoaded", function () {
   function resetToSetup() {
     if (running) { return; }
     stopPlayback();
+    if (els.start) { els.start.disabled = false; }
     currentState = null;
     currentConsult = null;
     els.debateView.classList.add("hidden");
@@ -395,6 +534,7 @@ document.addEventListener("DOMContentLoaded", function () {
       : BR.consultSystem;
     BR.callLLM(providerId, model, consultSystem, BR.consultUser(currentConsult, currentConsult.advisor)).then(function (res) {
       running = false;
+      if (els.start) { els.start.disabled = false; }
       if (res.ok && res.text) {
         currentConsult.answer = res.text;
         currentConsult.servedBy = res.servedBy || null;
@@ -443,7 +583,12 @@ document.addEventListener("DOMContentLoaded", function () {
       var prev = els.transcript.querySelectorAll(".tx-entry.focused");
       prev.forEach(function (el) { el.classList.remove("focused"); });
       last.classList.add("focused");
-      if (last.scrollIntoView) { last.scrollIntoView({ behavior: "smooth", block: "center" }); }
+      if (last.scrollIntoView) { last.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "center" }); }
+      /* Focus also replays that seat's latest line, with the same
+         word-by-word mouth movement and lean as normal playback.
+         Keyboard focus plus Enter or Space reaches here too, so the
+         replay is not click-only. */
+      playEntry(last);
     }
     var kp = els.keypoints.querySelectorAll(".kp-item");
     kp.forEach(function (el) {
@@ -466,8 +611,9 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   });
 
-  /* Idle blink: one random idle seat dips for 130ms on a 2.4 to 6.6s
-     cycle. Skipped entirely under prefers-reduced-motion. */
+  /* Idle blink: one random idle seat closes its eyelid for 260ms on
+     a 2.4 to 6.6s cycle. Skipped entirely under
+     prefers-reduced-motion. */
   var reducedMotion = false;
   try {
     reducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -480,10 +626,24 @@ document.addEventListener("DOMContentLoaded", function () {
       if (thumbs.length > 0 && !els.debateView.classList.contains("hidden")) {
         var pick = thumbs[Math.floor(Math.random() * thumbs.length)];
         pick.classList.add("blinking");
-        setTimeout(function () { pick.classList.remove("blinking"); }, 130);
+        setTimeout(function () { pick.classList.remove("blinking"); }, 280);
       }
       scheduleBlink();
     }, delay);
+  }
+
+  /* Live character counters against the real field limits, and
+     specific form errors that name the field and point at it. */
+  function setCounter(inputEl, counterEl, max) {
+    if (!inputEl || !counterEl) { return; }
+    counterEl.textContent = inputEl.value.length + " / " + max + " characters";
+  }
+
+  function refreshCounters() {
+    setCounter(els.title, els.countTitle, 200);
+    setCounter(els.context, els.countContext, 4000);
+    setCounter(els.customName, els.countCustomName, 60);
+    setCounter(els.customView, els.countCustomView, 500);
   }
 
   els.provider.addEventListener("change", function () {
@@ -496,16 +656,29 @@ document.addEventListener("DOMContentLoaded", function () {
     if (running) { return; }
     var title = els.title.value.trim();
     var context = els.context.value.trim();
-    if (!title) { setStatus("Enter a decision title first."); return; }
-    if (!context) { setStatus("Enter context for the decision first."); return; }
     var providerId = els.provider.value;
     var optionLines = els.options.value.split("\n").map(function (l) { return l.trim(); }).filter(Boolean);
     var customName = els.customName.value.trim();
     var customView = els.customView.value.trim();
+    var formErrors = [];
+    if (!title) { formErrors.push({ field: els.title, msg: "Decision title: enter a title." }); }
+    if (!context) { formErrors.push({ field: els.context, msg: "Context: enter context for the decision." }); }
     if (customName && !customView) {
-      setStatus("Add a viewpoint for your custom advisor, or leave the name blank.");
+      formErrors.push({ field: els.customView, msg: "Custom advisor viewpoint: enter the viewpoint, or leave the name blank." });
+    }
+    if (!customName && customView) {
+      formErrors.push({ field: els.customName, msg: "Custom advisor name: enter a name, or clear the viewpoint." });
+    }
+    if (formErrors.length > 0) {
+      if (els.formErrors) {
+        els.formErrors.innerHTML = "<ul>" + formErrors.map(function (e) { return "<li>" + BR.esc(e.msg) + "</li>"; }).join("") + "</ul>";
+        els.formErrors.classList.remove("hidden");
+      }
+      formErrors[0].field.focus();
       return;
     }
+    if (els.formErrors) { els.formErrors.classList.add("hidden"); }
+    if (els.start) { els.start.disabled = true; }
     var mode = els.mode.value;
     if (mode === "consult") {
       var seatId = els.consultSeat.value;
@@ -621,5 +794,10 @@ document.addEventListener("DOMContentLoaded", function () {
   renderHistoryList();
   showResumePanel();
   scheduleBlink();
+  refreshCounters();
+  if (els.title) { els.title.addEventListener("input", refreshCounters); }
+  if (els.context) { els.context.addEventListener("input", refreshCounters); }
+  if (els.customName) { els.customName.addEventListener("input", refreshCounters); }
+  if (els.customView) { els.customView.addEventListener("input", refreshCounters); }
   setStatus("Ready. Describe a decision, and start the board.");
 });

@@ -245,9 +245,23 @@ BR.splitWords = function (text) {
   return String(text).split(/\s+/).filter(Boolean);
 };
 
-/* Mouth states cycle with the spoken word: closed, mid, open, mid.
-   These are stylised indicators on the portrait thumb, not lip-sync. */
-BR.mouthClassFor = function (index) {
+/* Mouth states move with the spoken word. When the word is given, a
+   plain sound rule picks the shape: words that start with a lip sound
+   (m, b, p, f, v) close, words that start with a vowel or an open
+   sound (a, e, i, o, u) open, other starting sounds sit in the
+   middle. When no word is given, the old four-step cycle
+   (closed, mid, open, mid) runs instead. These are stylised
+   indicators on the portrait thumb, not lip-sync to a real person. */
+BR.mouthClassFor = function (index, word) {
+  if (typeof word === "string" && word.trim()) {
+    var clean = word.trim().toLowerCase().replace(/[^a-z]/g, "");
+    if (clean) {
+      var first = clean.charAt(0);
+      if ("mbpfv".indexOf(first) !== -1) { return "mouth-closed"; }
+      if ("aeiou".indexOf(first) !== -1) { return "mouth-open"; }
+      return "mouth-mid";
+    }
+  }
   var cycle = ["mouth-closed", "mouth-mid", "mouth-open", "mouth-mid"];
   return cycle[((index % 4) + 4) % 4];
 };

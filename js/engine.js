@@ -254,7 +254,15 @@ BR.validateDiscussion = function (obj) {
   if (!obj || typeof obj !== "object") { return null; }
   var agree = (obj.agree === "agree" || obj.agree === "disagree") ? obj.agree : null;
   if (!agree) { return null; }
-  if (typeof obj.answerTo !== "string" || !obj.answerTo.trim()) { return null; }
+  /* Field aliases, normalised before any check, so a concession given
+     under "concession" counts exactly like one given under "concede",
+     and a weak premise given under "weakestPremise" counts like one
+     given under "weakPoint". No alias invents a value: an empty alias
+     still fails the checks below. */
+  var answerTo = (typeof obj.answerTo === "string" && obj.answerTo.trim()) ? obj.answerTo : obj.target;
+  var weakPoint = (typeof obj.weakPoint === "string" && obj.weakPoint.trim()) ? obj.weakPoint : (obj.weakestPremise || obj.weakPremise);
+  var concede = (typeof obj.concede === "string" && obj.concede.trim()) ? obj.concede : obj.concession;
+  if (typeof answerTo !== "string" || !answerTo.trim()) { return null; }
   if (typeof obj.pointAnswered !== "string" || !obj.pointAnswered.trim()) { return null; }
   if (typeof obj.reply !== "string" || !obj.reply.trim()) { return null; }
   /* Steelman is now a required, labelled field, not an optional
@@ -268,18 +276,18 @@ BR.validateDiscussion = function (obj) {
      prices being wrong, and names the evidence that would settle
      the point. A reply that only agrees politely, or that concedes
      a bare "nothing", fails validation and is retried. */
-  if (typeof obj.weakPoint !== "string" || !obj.weakPoint.trim()) { return null; }
-  if (typeof obj.concede !== "string" || !BR.concessionIsReasoned(obj.concede)) { return null; }
+  if (typeof weakPoint !== "string" || !weakPoint.trim()) { return null; }
+  if (typeof concede !== "string" || !BR.concessionIsReasoned(concede)) { return null; }
   if (typeof obj.costOfBeingWrong !== "string" || !obj.costOfBeingWrong.trim()) { return null; }
   if (typeof obj.evidenceDemanded !== "string" || !obj.evidenceDemanded.trim()) { return null; }
   return {
-    answerTo: BR.clampText(obj.answerTo.trim(), 60),
+    answerTo: BR.clampText(answerTo.trim(), 60),
     agree: agree,
     pointAnswered: BR.clampText(obj.pointAnswered.trim(), 300),
     steelman: BR.clampText(obj.steelman.trim(), 300),
-    weakPoint: BR.clampText(obj.weakPoint.trim(), 300),
+    weakPoint: BR.clampText(weakPoint.trim(), 300),
     reply: BR.clampText(obj.reply.trim(), 600),
-    concede: BR.clampText(obj.concede.trim(), 300),
+    concede: BR.clampText(concede.trim(), 300),
     costOfBeingWrong: BR.clampText(obj.costOfBeingWrong.trim(), 300),
     evidenceDemanded: BR.clampText(obj.evidenceDemanded.trim(), 200),
     reason: BR.clampText(typeof obj.reason === "string" ? obj.reason : "", 300)
@@ -342,9 +350,8 @@ BR.assignDiscussionTargets = function (state) {
     Object.keys(state.discussion).forEach(function (seatId) {
       var done = state.discussion[seatId];
       if (done && done.answerTo) {
-        state.advisors.forEach(function (a) {
-          if (a.short === done.answerTo && used.indexOf(a.id) === -1) { used.push(a.id); }
-        });
+        var already = BR.matchAdvisorByLabel(state, done.answerTo, seatId);
+        if (already && used.indexOf(already.id) === -1) { used.push(already.id); }
       }
     });
   }
@@ -365,6 +372,75 @@ BR.discussionTargetFor = function (state, advisorId) {
     if (found) { return found; }
   }
   return BR.strongestDiscussionTarget(state, advisorId);
+};
+
+/* Match a free-text label to a real seat, without falling back.
+   Matches, in order: seat id, seat short name, then any long word in
+   the label that appears in the seat pillar, dimension, or role.
+   That last rule is what turns a topic label into its owner: a label
+   of "Leverage" matches the Philosopher (pillar and dimension both
+   carry leverage), and "Operations" matches EOS (pillar "Operations
+   and scaling"). Returns null when nothing matches, so callers can
+   fall back honestly instead of inventing a match. A seat never
+   matches itself here. */
+BR.matchAdvisorByLabel = function (state, raw, excludeId) {
+  if (!raw || !state || !state.advisors) { return null; }
+  var label = String(raw).trim().toLowerCase();
+  if (!label) { return null; }
+  var match = null;
+  state.advisors.forEach(function (a) {
+    if (match || a.id === excludeId) { return; }
+    if (a.id.toLowerCase() === label || a.short.toLowerCase() === label) { match = a; }
+  });
+  if (match) { return match; }
+  var words = label.split(/[^a-z0-9]+/).filter(function (w) { return w.length >= 4; });
+  state.advisors.forEach(function (a) {
+    if (match || a.id === excludeId) { return; }
+    var fields = [a.pillar, a.dimension, a.role].map(function (f) { return (f || "").toLowerCase(); });
+    var hit = words.some(function (w) {
+      return fields.some(function (f) { return f.indexOf(w) !== -1; });
+    });
+    if (hit) { match = a; }
+  });
+  return match;
+};
+
+/* Resolve a discussion answer target to a real seat, always. A real
+   seat name wins first, a pillar, dimension, or topic label resolves
+   to the seat that owns it, then the assigned target, then the
+   strongest opposing seat. The result is never a topic label, so a
+   rendered discussion card can never claim to answer "Leverage" or
+   "Operations" as if that were a seat. */
+BR.resolveDiscussionTarget = function (state, speakerId, rawAnswerTo) {
+  var byLabel = BR.matchAdvisorByLabel(state, rawAnswerTo, speakerId);
+  if (byLabel) { return byLabel; }
+  var assigned = BR.discussionTargetFor(state, speakerId);
+  if (assigned && assigned.id !== speakerId) { return assigned; }
+  return BR.strongestDiscussionTarget(state, speakerId);
+};
+
+/* Display name for a discussion entry, resolved the same way at
+   every surface that shows it: transcript, exports, and arrows.
+   This covers entries saved before resolution existed, whose stored
+   answerTo may still be a topic label: they render as the owning
+   seat, never as the label. When nothing resolves, the stored value
+   is shown as stored, never replaced with a guessed seat. */
+BR.displayDiscussionTarget = function (state, entry) {
+  if (!entry || !state || !state.advisors) { return (entry && entry.answerTo) || ""; }
+  if (entry.targetId) {
+    var byId = BR.advisorById(state, entry.targetId);
+    if (byId) { return byId.short; }
+  }
+  var speaker = null;
+  state.advisors.forEach(function (a) { if (a.short === entry.speaker) { speaker = a; } });
+  var speakerId = speaker ? speaker.id : null;
+  var matched = BR.matchAdvisorByLabel(state, entry.answerTo, speakerId);
+  if (matched) { return matched.short; }
+  if (speaker && state.discussionTargets && state.discussionTargets[speaker.id]) {
+    var assigned = BR.advisorById(state, state.discussionTargets[speaker.id]);
+    if (assigned) { return assigned.short; }
+  }
+  return entry.answerTo || "";
 };
 
 BR.validateDraft = function (obj) {
@@ -793,7 +869,7 @@ BR.discussionUser = function (state, advisor, target, targetCard) {
     : state.opening;
   var myCard = latest ? latest[advisor.id] : null;
   if (target) {
-    lines.push("You are answering " + target.short + " (" + target.pillar + ") directly, not the room in general.");
+    lines.push("You are answering " + target.short + " (" + target.pillar + ") directly, not the room in general. Put that exact short name in the answerTo field, not a topic, pillar, or dimension name.");
     if (targetCard) {
       lines.push(target.short + "'s latest position: " + targetCard.stance + " on option " + targetCard.recommendedId + ". " + targetCard.reason);
       if (targetCard.rebuttal) { lines.push(target.short + "'s latest rebuttal: " + targetCard.rebuttal); }
@@ -959,16 +1035,21 @@ BR.applyStepResult = function (state, step, parsed) {
     if (!round) { round = { round: step.round, cards: {} }; state.debateRounds[step.round - 1] = round; }
     round.cards[step.advisorId] = db;
     var adv2 = BR.advisorById(state, step.advisorId);
-    state.transcript.push({ kind: "argument", speaker: adv2 ? adv2.short : step.advisorId, title: "Debate round " + step.round, body: db.rebuttal || db.reason, disagreeWith: db.disagreeWith || "" });
+    state.transcript.push({ kind: "argument", speaker: adv2 ? adv2.short : step.advisorId, title: "Debate round " + step.round, body: db.rebuttal || db.reason, disagreeWith: db.disagreeWith || "", concede: db.concede || "" });
     return { ok: true };
   }
   if (step.key.indexOf("discussion:") === 0) {
     var dc = BR.validateDiscussion(parsed);
     if (!dc) { return { ok: false }; }
+    /* Resolve the answer target to a real seat before anything is
+       stored or rendered, so a topic label in model output can never
+       reach the transcript as if it were a seat. */
+    var resolvedTarget = BR.resolveDiscussionTarget(state, step.advisorId, dc.answerTo);
+    if (resolvedTarget) { dc.answerTo = resolvedTarget.short; }
     if (!state.discussion) { state.discussion = {}; }
     state.discussion[step.advisorId] = dc;
     var advD = BR.advisorById(state, step.advisorId);
-    state.transcript.push({ kind: "discussion", speaker: advD ? advD.short : step.advisorId, title: "Discussion", body: dc.reply, answerTo: dc.answerTo, agree: dc.agree, pointAnswered: dc.pointAnswered, steelman: dc.steelman, weakPoint: dc.weakPoint, concede: dc.concede, costOfBeingWrong: dc.costOfBeingWrong, evidenceDemanded: dc.evidenceDemanded });
+    state.transcript.push({ kind: "discussion", speaker: advD ? advD.short : step.advisorId, title: "Discussion", body: dc.reply, answerTo: dc.answerTo, targetId: resolvedTarget ? resolvedTarget.id : "", agree: dc.agree, pointAnswered: dc.pointAnswered, steelman: dc.steelman, weakPoint: dc.weakPoint, concede: dc.concede, costOfBeingWrong: dc.costOfBeingWrong, evidenceDemanded: dc.evidenceDemanded });
     return { ok: true };
   }
   if (step.key === "draft") {
@@ -1079,7 +1160,7 @@ BR.buildTranscriptText = function (state) {
   state.transcript.forEach(function (t) {
     var line = "[" + t.title + "] " + t.speaker + ": " + t.body;
     if (t.kind === "discussion" && t.answerTo) {
-      line += " [answers " + t.answerTo + ", " + (t.agree || "") + ": " + (t.pointAnswered || "") +
+      line += " [answers " + BR.displayDiscussionTarget(state, t) + ", " + (t.agree || "") + ": " + (t.pointAnswered || "") +
         " | steelman: " + (t.steelman || "") +
         " | weak point: " + (t.weakPoint || "") + " | concedes: " + (t.concede || "") +
         " | cost if wrong: " + (t.costOfBeingWrong || "") + " | settles it: " + (t.evidenceDemanded || "") + "]";
@@ -1152,7 +1233,7 @@ BR.buildMarkdown = function (state) {
     lines.push("");
     lines.push("Each seat answers one other seat's actual point, after the debate rounds and before the draft. Each reply first steelmans the target point at its strongest, then attacks a weak premise, concedes only when beaten with a reason, prices being wrong, and names the evidence that would settle it. Discussion targets are assigned so seats do not all pile onto one opponent.");
     discussionEntries.forEach(function (t) {
-      lines.push("- " + t.speaker + " answers " + t.answerTo + " (" + t.agree + " on: " + t.pointAnswered + "): " + t.body);
+      lines.push("- " + t.speaker + " answers " + BR.displayDiscussionTarget(state, t) + " (" + t.agree + " on: " + t.pointAnswered + "): " + t.body);
       lines.push("  Steelman: " + (t.steelman || "") + " | Weak point: " + (t.weakPoint || "") + " | Concedes: " + (t.concede || "") + " | Cost if wrong: " + (t.costOfBeingWrong || "") + " | Settles it: " + (t.evidenceDemanded || ""));
     });
   }

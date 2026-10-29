@@ -85,6 +85,7 @@ BR.avatarThumb = function (a, cls) {
     inner += '<img class="thumb-img" src="' + BR.esc(path) + '" alt="" onerror="this.style.display=\'none\'">';
   }
   inner += '<span class="mouth" aria-hidden="true"></span>';
+  inner += '<span class="eyelid" aria-hidden="true"></span>';
   return '<span class="thumb ' + (cls || "") + '">' + inner + '</span>';
 };
 
@@ -107,7 +108,14 @@ BR.currentRebuttal = function (state) {
     }
     if (t.kind === "discussion" && t.answerTo) {
       var fromD = BR.advisorByShort(state, t.speaker);
-      var toD = BR.advisorByShort(state, t.answerTo);
+      var toD = null;
+      if (t.targetId) {
+        state.advisors.forEach(function (a) { if (a.id === t.targetId) { toD = a; } });
+      }
+      if (!toD && typeof BR.matchAdvisorByLabel === "function") {
+        toD = BR.matchAdvisorByLabel(state, t.answerTo, fromD ? fromD.id : null);
+      }
+      if (!toD) { toD = BR.advisorByShort(state, t.answerTo); }
       if (fromD && toD && fromD.id !== toD.id) { return { from: fromD, to: toD, kind: "discussion" }; }
     }
   }
@@ -148,7 +156,7 @@ BR.renderStepper = function (container, state) {
     if (i < phase) { cls += " done"; }
     if (i === phase) { cls += " current"; }
     if (i > 0) { html += '<span class="step-sep" aria-hidden="true">›</span>'; }
-    html += '<span class="' + cls + '">' + BR.esc(label) + '</span>';
+    html += '<span class="' + cls + '"' + (i === phase ? ' aria-current="step"' : '') + '>' + BR.esc(label) + '</span>';
   });
   html += '</nav>';
   container.innerHTML = html;
@@ -181,6 +189,65 @@ BR.leanVectorFor = function (speakerIndex, targetIndex, total) {
   return { dx: Math.round((dx / len) * 14), dy: Math.round((dy / len) * 14) };
 };
 
+/* Look direction on the table: which way a seat faces, from the real
+   table geometry. Returns "left" or "right" when the target sits
+   clearly to one side, and "" when it sits almost straight ahead or
+   behind, so no seat turns for a target it already faces. This is
+   direction only, distinct from the lean translation. */
+BR.lookDirectionFor = function (fromIndex, toIndex, total) {
+  if (fromIndex === null || fromIndex === undefined ||
+      toIndex === null || toIndex === undefined || fromIndex === toIndex) { return ""; }
+  var from = BR.seatPointFor(fromIndex, total);
+  var to = BR.seatPointFor(toIndex, total);
+  var dx = to.x - from.x;
+  if (dx > 2) { return "right"; }
+  if (dx < -2) { return "left"; }
+  return "";
+};
+
+/* Arrow endpoints in pixels for a stage box of the given size, so
+   the arrowhead keeps its shape: the SVG is sized to the box in
+   pixels instead of stretching a 100 by 100 viewBox across a wide
+   stage. Returns null for a missing or identical pair. */
+BR.arrowPointsFor = function (fromIndex, toIndex, total, width, height) {
+  if (fromIndex === null || fromIndex === undefined ||
+      toIndex === null || toIndex === undefined || fromIndex === toIndex ||
+      !width || !height) { return null; }
+  var from = BR.seatPointFor(fromIndex, total);
+  var to = BR.seatPointFor(toIndex, total);
+  return {
+    x1: Math.round((from.x / 100) * width), y1: Math.round((from.y / 100) * height),
+    x2: Math.round((to.x / 100) * width), y2: Math.round((to.y / 100) * height)
+  };
+};
+
+/* Data-driven reaction for a seat whose new card just landed, judged
+   against the previous speaker's option. The seat nods when its new
+   card moves onto the previous speaker's option, shakes when its new
+   card moves off it, and stays neutral otherwise. No reaction is
+   ever drawn from tone, only from these three option ids. */
+BR.reactionFor = function (previousOptionId, newOptionId, speakerOptionId) {
+  if (!previousOptionId || !newOptionId || !speakerOptionId) { return ""; }
+  if (newOptionId === speakerOptionId && previousOptionId !== speakerOptionId) { return "nod"; }
+  if (previousOptionId === speakerOptionId && newOptionId !== speakerOptionId) { return "shake"; }
+  return "";
+};
+
+/* History dates in plain local form: "29 Oct 2026, 7:09 pm" style,
+   from the browser's own locale, with no timezone label added. An
+   unparseable value is returned as stored, never replaced with a
+   guessed date. */
+BR.formatHistoryDate = function (iso) {
+  if (!iso) { return ""; }
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) { return String(iso); }
+  try {
+    return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  } catch (e) {
+    return String(iso);
+  }
+};
+
 BR.renderStage = function (container, state, speakingId, rebuttal) {
   var total = state.advisors.length;
   var speakerIdx = -1;
@@ -200,13 +267,16 @@ BR.renderStage = function (container, state, speakingId, rebuttal) {
     html += '<div class="round-table-speaker">The board</div>';
   }
   html += '</div>';
-  /* Arrow across the table, speaker to target, drawn in the same
-     percent coordinates as the seats. The text strip below repeats
-     it in words for screen readers and for plain text. */
+  /* Arrow across the table, speaker to target. The line starts in
+     the same percent coordinates as the seats, and the page then
+     repositions it in pixels for the real stage box (see
+     positionArrows in main.js), so the arrowhead keeps its shape on
+     any stage width instead of stretching. The text strip below
+     repeats it in words for screen readers and for plain text. */
   if (rebuttal && rebuttal.from && rebuttal.to && speakerIdx >= 0 && targetIdx >= 0 && speakerIdx !== targetIdx) {
     var fromPt = BR.seatPointFor(speakerIdx, total);
     var toPt = BR.seatPointFor(targetIdx, total);
-    html += '<svg class="round-arrows" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><defs><marker id="rt-head" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#e8a33d" /></marker></defs><line x1="' + fromPt.x + '" y1="' + fromPt.y + '" x2="' + toPt.x + '" y2="' + toPt.y + '" stroke="#e8a33d" stroke-width="0.6" marker-end="url(#rt-head)" /></svg>';
+    html += '<svg class="round-arrows" data-from-idx="' + speakerIdx + '" data-to-idx="' + targetIdx + '" data-total="' + total + '" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><defs><marker id="rt-head" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#e8a33d" /></marker></defs><line class="round-arrow-line" x1="' + fromPt.x + '" y1="' + fromPt.y + '" x2="' + toPt.x + '" y2="' + toPt.y + '" stroke="#e8a33d" stroke-width="1.5" vector-effect="non-scaling-stroke" marker-end="url(#rt-head)" /></svg>';
   }
   state.advisors.forEach(function (a, idx) {
     var found = BR.latestCardFor(state, a.id);
@@ -227,6 +297,18 @@ BR.renderStage = function (container, state, speakingId, rebuttal) {
       }
     }
     else if (speakingId) { cls += " dim"; }
+    /* Look direction: the speaker faces its target, and every idle
+       seat turns slightly toward the speaker, so the room reads as
+       listening instead of staring straight ahead. Lean stays a
+       separate seat-level translation. */
+    var look = "";
+    if (speaking) {
+      if (targetIdx >= 0) { look = BR.lookDirectionFor(speakerIdx, targetIdx, total); }
+    } else if (speakingId && speakerIdx >= 0) {
+      look = BR.lookDirectionFor(idx, speakerIdx, total);
+    }
+    if (look) { cls += " look-" + look; }
+    if (speakingId && rebuttal && rebuttal.to && rebuttal.to.id === a.id) { cls += " addressed"; }
     if (pt.y < 50) { cls += " card-below"; }
     var weight = state.director && state.director.weights[a.id] ? state.director.weights[a.id] : null;
     html += '<div class="round-seat" style="left:' + pt.x.toFixed(2) + '%;top:' + pt.y.toFixed(2) + '%;">';
@@ -285,12 +367,12 @@ BR.renderCruxes = function (container, state) {
     html += '</li>';
   });
   html += '</ol>';
-  html += '<h3>Chair weights</h3><table class="weights-table"><thead><tr><th>Seat</th><th>Weight</th><th>Reason</th></tr></thead><tbody>';
+  html += '<h3>Chair weights</h3><div class="table-scroll"><table class="weights-table"><thead><tr><th>Seat</th><th>Weight</th><th>Reason</th></tr></thead><tbody>';
   state.advisors.forEach(function (a) {
     var w = state.director.weights[a.id] ? state.director.weights[a.id] : { weight: 1, reason: "General relevance." };
     html += '<tr><td>' + BR.esc(a.short) + '</td><td>' + BR.esc(w.weight) + ' / 3</td><td>' + BR.esc(w.reason) + '</td></tr>';
   });
-  html += '</tbody></table>';
+  html += '</tbody></table></div>';
   if (state.director.assumptions && state.director.assumptions.length > 0) {
     html += '<p class="muted">Assumptions: ' + state.director.assumptions.map(function (a) { return BR.esc(a); }).join("; ") + '</p>';
   }
@@ -311,7 +393,10 @@ BR.renderTranscript = function (container, state, speakingId) {
     } else {
       var adv = BR.advisorByShort(state, t.speaker);
       var speakerId = adv ? adv.id : "";
-      html += '<div class="tx-entry tx-advisor" data-speaker="' + BR.esc(speakerId) + '" data-kind="' + BR.esc(t.kind) + '">';
+      var displayTo = (t.kind === "discussion" && typeof BR.displayDiscussionTarget === "function")
+        ? BR.displayDiscussionTarget(state, t)
+        : (t.answerTo || "");
+      html += '<div class="tx-entry tx-advisor" data-speaker="' + BR.esc(speakerId) + '" data-kind="' + BR.esc(t.kind) + '" data-answer-to="' + BR.esc(displayTo) + '" data-disagree-with="' + BR.esc(t.disagreeWith || "") + '">';
       if (adv) { html += BR.avatarThumb(adv, ""); }
       html += '<div class="tx-content"><div class="tx-head"><span class="tx-speaker">' + BR.esc(t.speaker) + '</span>';
       html += '<span class="tx-kind">' + BR.esc(t.title) + '</span>' + BR.servedBadgeFor(state, t.stepKey) + '</div>';
@@ -319,17 +404,25 @@ BR.renderTranscript = function (container, state, speakingId) {
       if (t.disagreeWith) {
         html += '<div class="tx-rebuts">Rebuts ' + BR.esc(t.disagreeWith) + '</div>';
       }
+      /* Weak point and concession are separate lines, each shown
+         only when the card actually carries it. A card with no
+         concession shows no concession line, never an invented one. */
       if (t.kind === "discussion" && t.answerTo) {
-        html += '<div class="tx-rebuts">Answers ' + BR.esc(t.answerTo) + ' (' + BR.esc(t.agree || "") + ' on: ' + BR.esc(t.pointAnswered || "") + ')</div>';
+        html += '<div class="tx-rebuts">Answers ' + BR.esc(displayTo) + ' (' + BR.esc(t.agree || "") + ' on: ' + BR.esc(t.pointAnswered || "") + ')</div>';
         if (t.steelman) {
           html += '<div class="tx-rebuts">Steelman: ' + BR.esc(t.steelman) + '</div>';
         }
-        if (t.weakPoint || t.concede) {
-          html += '<div class="tx-rebuts">Weak point: ' + BR.esc(t.weakPoint || "") + ' &middot; Concedes: ' + BR.esc(t.concede || "") + '</div>';
+        if (t.weakPoint) {
+          html += '<div class="tx-rebuts">Weak point: ' + BR.esc(t.weakPoint) + '</div>';
+        }
+        if (t.concede) {
+          html += '<div class="tx-rebuts">Concedes: ' + BR.esc(t.concede) + '</div>';
         }
         if (t.costOfBeingWrong || t.evidenceDemanded) {
           html += '<div class="tx-rebuts">Cost if wrong: ' + BR.esc(t.costOfBeingWrong || "") + ' &middot; Settles it: ' + BR.esc(t.evidenceDemanded || "") + '</div>';
         }
+      } else if (t.concede) {
+        html += '<div class="tx-rebuts">Concedes: ' + BR.esc(t.concede) + '</div>';
       }
       html += '</div></div>';
     }
@@ -349,7 +442,7 @@ BR.renderTranscript = function (container, state, speakingId) {
 BR.renderKeyPoints = function (container, state) {
   if (state.verdict) {
     var v = state.verdict;
-    var html = '<table class="score-table"><thead><tr><th>Seat</th><th>Weight</th><th>Final stance</th><th>Pillar</th><th>Line</th></tr></thead><tbody>';
+    var html = '<div class="table-scroll"><table class="score-table"><thead><tr><th>Seat</th><th>Weight</th><th>Final stance</th><th>Pillar</th><th>Line</th></tr></thead><tbody>';
     state.advisors.forEach(function (a) {
       var w = state.director.weights[a.id] ? state.director.weights[a.id].weight : 1;
       var latest = BR.latestCardFor(state, a.id);
@@ -359,7 +452,7 @@ BR.renderKeyPoints = function (container, state) {
       html += '<td>' + BR.esc(v.pillarScores[a.id]) + '/10</td>';
       html += '<td>' + BR.esc(f ? f.line : "") + '</td></tr>';
     });
-    html += '</tbody></table>';
+    html += '</tbody></table></div>';
     container.innerHTML = html;
     return;
   }
@@ -461,11 +554,11 @@ BR.renderVerdict = function (container, state) {
     });
     html += '</ol>';
   }
-  html += '<h3>Pillar scorecard</h3><table class="score-table"><thead><tr><th>Seat</th><th>Dimension</th><th>Pillar</th></tr></thead><tbody>';
+  html += '<h3>Pillar scorecard</h3><div class="table-scroll"><table class="score-table"><thead><tr><th>Seat</th><th>Dimension</th><th>Pillar</th></tr></thead><tbody>';
   state.advisors.forEach(function (a) {
     html += '<tr><td>' + BR.esc(a.short) + '</td><td>' + BR.esc(a.dimension) + '</td><td>' + BR.esc(v.pillarScores[a.id]) + '/10</td></tr>';
   });
-  html += '</tbody></table>';
+  html += '</tbody></table></div>';
   if (v.pillarFixes && v.pillarFixes.length > 0) {
     html += '<h3>Pillar fixes</h3><ul>';
     v.pillarFixes.forEach(function (f) {
@@ -566,10 +659,10 @@ BR.renderHistory = function (container, sessions) {
   }
   var html = "";
   sessions.forEach(function (s) {
-    var modeSuffix = s.mode === "quick" ? " &middot; Quick mode" : "";
+    var modeLabel = s.mode === "quick" ? "Quick" : "Full debate";
     html += '<button class="history-item" data-session-id="' + BR.esc(s.id) + '">';
     html += '<span class="history-title">' + BR.esc(s.title) + '</span>';
-    html += '<span class="history-meta">' + BR.esc(s.createdAt) + ' &middot; ' + BR.esc(s.provider) + ' &middot; ' + BR.esc(s.rounds) + ' rounds' + modeSuffix + '</span>';
+    html += '<span class="history-meta">' + BR.esc(BR.formatHistoryDate(s.createdAt)) + ' &middot; ' + modeLabel + ' &middot; ' + BR.esc(s.provider) + ' &middot; ' + BR.esc(s.rounds) + ' rounds</span>';
     html += '</button>';
   });
   container.innerHTML = html;
