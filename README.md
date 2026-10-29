@@ -102,7 +102,7 @@ This repo is meant to be forked and deployed by its owner, not used as a hosted 
 node tests/harness.js
 ```
 
-The harness drives the debate state machine with canned provider responses and asserts scoring, verdicts, overrides, dissent, ratification, pillar fixes, top reasons, quick and consult modes, brain fields, brain slices, the adversarial discussion round (including the required steelman, the reasoned concession rule, distinct discussion targets, target resolution from topic labels, and separate concession rendering), round table geometry and lean vectors, look direction, data-driven reactions, pixel arrow endpoints, readable history dates, resume skipping of completed steps, fallback status reporting, playback helpers including the word-based mouth rule, exports, and input limits: 155 checks, all passing. It is not loaded by the app, and the production app ships no mock mode.
+The harness drives the debate state machine with canned provider responses and asserts scoring, verdicts, overrides, dissent, ratification, pillar fixes, top reasons, quick and consult modes, brain fields, brain slices, the adversarial discussion round (including the required steelman, the reasoned concession rule, distinct discussion targets, target resolution from topic labels, and separate concession rendering), round table geometry and lean vectors, look direction, data-driven reactions, pixel arrow endpoints, readable history dates, resume skipping of completed steps, fallback status reporting, playback helpers including the word-based mouth rule, exports, and input limits: 162 checks, all passing. It is not loaded by the app, and the production app ships no mock mode.
 
 ## Credit
 

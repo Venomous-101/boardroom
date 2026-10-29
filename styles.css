@@ -125,7 +125,7 @@ button:disabled { opacity: 0.55; cursor: default; }
 .stage-round {
   position: relative;
   min-height: 560px;
-  margin: 12px 0 8px;
+  margin: 12px 0 120px;
 }
 .round-seat {
   position: absolute;
@@ -474,7 +474,7 @@ footer {
    never squeezed off the edge or overlapped. The centre table becomes
    a full-width banner at the top of the grid. */
 @media (max-width: 700px) {
-  .stage-round { min-height: 0; display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+  .stage-round { min-height: 0; display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 12px; }
   .round-table { position: static; transform: none; grid-column: 1 / -1; width: 100%; aspect-ratio: auto; border-radius: 12px; }
   .round-arrows { display: none; }
   .round-seat { position: static; transform: none; width: auto; }
