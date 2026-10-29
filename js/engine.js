@@ -1147,9 +1147,22 @@ BR.runDebate = function (state, callFn, onProgress) {
         state.failedStep = { key: step.key, label: step.label, error: res.error };
         return { ok: false, failedStep: state.failedStep };
       }
-      if (typeof state.onStepDone === "function") { state.onStepDone(step); }
-      index += 1;
-      return next();
+      /* The loop WAITS for the step-done handler before the next
+         step starts. That wait is what makes live speaking real:
+         the previous build called onStepDone and then started the
+         next step synchronously, so its onProgress stopped the
+         playback before any word could reveal and no reaction ever
+         painted. A handler that returns nothing waits for nothing;
+         a handler that returns a promise (the page's playback
+         promise) is awaited, so the line finishes revealing, with
+         its mouth moving and its reaction playing, before the next
+         seat starts thinking. */
+      var done = null;
+      if (typeof state.onStepDone === "function") { done = state.onStepDone(step); }
+      return Promise.resolve(done).then(function () {
+        index += 1;
+        return next();
+      });
     });
   };
   return next();

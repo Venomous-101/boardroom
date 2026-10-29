@@ -266,15 +266,6 @@ BR.mouthClassFor = function (index, word) {
   return cycle[((index % 4) + 4) % 4];
 };
 
-/* Lean direction on the stage: the speaker leans toward the seat it
-   addresses, based on stage order. Same seat or no target: no lean. */
-BR.leanClassFor = function (speakerIndex, targetIndex) {
-  if (speakerIndex === null || speakerIndex === undefined ||
-      targetIndex === null || targetIndex === undefined) { return ""; }
-  if (targetIndex < speakerIndex) { return "lean-left"; }
-  if (targetIndex > speakerIndex) { return "lean-right"; }
-  return "";
-};
 
 /* Voice is off by default everywhere. The toggle in the page sets it;
    no voice is ever sent to a server, and no key is involved. */

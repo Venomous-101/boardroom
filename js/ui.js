@@ -2,10 +2,13 @@
    Every dynamic string passes through BR.esc before it reaches innerHTML.
    No user text and no model text is ever inserted unescaped.
    Portraits come from a fixed allowlist of seat ids, never from user input.
-   Animation is pure CSS/JS: speaking rise/glow/bob, idle breathing and
-   blink, hover lift with a seat card, click to focus, spotlight, and a
-   rebuttal arrow strip. Reduced motion is honored in styles.css and by
-   the blink timer in main.js. */
+   Animation is pure CSS/JS, in five states per seat (idle, thinking,
+   speaking, listening, reacting): thinking bubble and ponder tilt
+   during a model wait, visible lift and head tilt with a mouth on
+   the face during speech, idle breathing and blink, hover lift with
+   a seat card, click to focus, spotlight, and an animated dashed
+   interaction arc with a rebuttal strip. Reduced motion is honored
+   in styles.css and by the blink timer in main.js. */
 
 var BR = (function () {
   if (typeof window !== "undefined") { window.BR = window.BR || {}; return window.BR; }
@@ -76,17 +79,67 @@ BR.avatarPathFor = function (advisorId) {
   return "assets/avatars/" + advisorId + ".png";
 };
 
+/* Mouth position on the face itself, per seat, as percent of the
+   square portrait (the thumb is a circle crop of the full square, so
+   percent maps directly). Grounded 30 Oct 2026 by visual grounding on
+   each PNG; see the working note beside the app, not in the app.
+   A seat with no portrait (the custom advisor) gets no mouth overlay
+   and still gets the whole-bust lift, lean, spotlight, and dimming. */
+BR.MOUTH_POS = {
+  operator: { x: 51.4, y: 33.5 }, offer: { x: 50, y: 45.4 },
+  investor: { x: 50, y: 49.6 }, marketer: { x: 48, y: 47.5 },
+  philosopher: { x: 52, y: 48.3 }, founder: { x: 48.5, y: 52 },
+  saas: { x: 50, y: 46.1 }, eos: { x: 50, y: 48 }
+};
+
 /* Round thumb: initials underneath, portrait on top. If the portrait
-   fails to load, the onerror hides it and the initials show instead. */
+   fails to load, the onerror hides it and the initials show instead.
+   The mouth overlay and eyelid exist only on a real portrait, so a
+   custom advisor's initials thumb never wears a floating mouth. */
 BR.avatarThumb = function (a, cls) {
   var path = BR.avatarPathFor(a.id);
+  var pos = BR.MOUTH_POS[a.id] || { x: 50, y: 48 };
   var inner = '<span class="thumb-initials" style="background:' + BR.esc(a.color) + '">' + BR.esc(a.initials) + '</span>';
   if (path) {
-    inner += '<img class="thumb-img" src="' + BR.esc(path) + '" alt="" onerror="this.style.display=\'none\'">';
+    inner += '<img class="thumb-img" src="' + BR.esc(path) + '" alt="" onerror="this.style.display=\'none\';this.parentNode.classList.add(\'portrait-failed\')">';
+    inner += '<span class="mouth" aria-hidden="true"></span>';
+    inner += '<span class="eyelid" aria-hidden="true"></span>';
   }
-  inner += '<span class="mouth" aria-hidden="true"></span>';
-  inner += '<span class="eyelid" aria-hidden="true"></span>';
-  return '<span class="thumb ' + (cls || "") + '">' + inner + '</span>';
+  return '<span class="thumb ' + (cls || "") + '" style="--mouth-x:' + pos.x + '%;--mouth-y:' + pos.y + '%">' + inner + '</span>';
+};
+
+/* Live character states. Exactly one per seat at a time, enforced by
+   construction: the map holds one value per seat id, and an unknown
+   state is ignored, never stored. Order is the life of a line:
+   idle, then thinking while its model call is in flight, then
+   speaking while its line reveals word by word, then listening
+   while another seat speaks (addressed is a listening seat that
+   was answered or rebutted, a modifier, not a sixth state). A
+   reaction (nod or shake) is a transient animation on the thumb
+   wrapper during playback, not a second state, so the map never
+   holds two states for one seat. "reacting" stays a valid value
+   for charStateFor validation, but the page never renders it. */
+BR.CHAR_STATES = ["idle", "thinking", "speaking", "listening", "reacting"];
+
+BR.charStateFor = function (charStates, seatId) {
+  if (!charStates || BR.CHAR_STATES.indexOf(charStates[seatId]) === -1) { return "idle"; }
+  return charStates[seatId];
+};
+
+/* One state per seat for a whole board, from the two live ids the
+   page tracks: the seat whose call is in flight thinks, the seat
+   whose line is revealing speaks, every other seat listens while
+   either is live, and every seat is idle when neither is. A seat is
+   never both thinking and speaking. */
+BR.charStatesFor = function (advisors, thinkingId, speakingId) {
+  var out = {};
+  advisors.forEach(function (a) {
+    if (thinkingId && a.id === thinkingId) { out[a.id] = "thinking"; }
+    else if (speakingId && a.id === speakingId) { out[a.id] = "speaking"; }
+    else if (thinkingId || speakingId) { out[a.id] = "listening"; }
+    else { out[a.id] = "idle"; }
+  });
+  return out;
 };
 
 BR.advisorByShort = function (state, short) {
@@ -176,7 +229,7 @@ BR.seatPointFor = function (index, total) {
 /* Lean toward the addressed seat as a real vector on the table, not
    just left or right: the unit direction from the speaker's point to
    the target's point, scaled to 14 pixels. Same seat or no target:
-   no lean. The old leanClassFor stays for compatibility. */
+   no lean. */
 BR.leanVectorFor = function (speakerIndex, targetIndex, total) {
   if (speakerIndex === null || speakerIndex === undefined ||
       targetIndex === null || targetIndex === undefined || speakerIndex === targetIndex) { return null; }
@@ -205,32 +258,54 @@ BR.lookDirectionFor = function (fromIndex, toIndex, total) {
   return "";
 };
 
-/* Arrow endpoints in pixels for a stage box of the given size, so
-   the arrowhead keeps its shape: the SVG is sized to the box in
-   pixels instead of stretching a 100 by 100 viewBox across a wide
-   stage. Returns null for a missing or identical pair. */
-BR.arrowPointsFor = function (fromIndex, toIndex, total, width, height) {
+
+/* Data-driven reaction for the ADDRESSED seat after a line, never
+   for the speaker and never from tone. A final vote decides it when
+   one exists: endorse or endorse with amendment nods, dissent
+   shakes. Before any final vote, the addressed seat nods only when
+   its latest card recommends the same option the speaker just
+   argued for; any other combination gives no reaction at all.
+   This replaces the old speaker-reaction helper: Ali's live check
+   showed reactions must read on the seat being answered, not on
+   the seat that just spoke. */
+BR.targetReactionFor = function (speakerOptionId, targetOptionId, targetVote) {
+  if (targetVote === "Dissent") { return "shake"; }
+  if (targetVote === "Endorse" || targetVote === "Endorse with amendment") { return "nod"; }
+  if (targetVote) { return ""; }
+  if (speakerOptionId && targetOptionId && speakerOptionId === targetOptionId) { return "nod"; }
+  return "";
+};
+
+/* Animated interaction arc in pixels for a stage box of the given
+   size: a quadratic curve from the speaker's seat EDGE to the
+   target's seat edge, bowed a third of the way toward the table
+   centre so it reads as an arc across the table, not a straight
+   ruler line. Endpoints stop at the seat edge, never at the seat
+   centre, because the seats sit above the SVG and would hide the
+   arrowhead. The inset is capped at 80px and at 30 percent of the
+   seat distance, so short chords still show an arc. Returns null
+   for a missing or identical pair. The page sizes the SVG to the
+   real stage box after render, so the arc keeps its shape at any
+   stage width. */
+BR.arcPathFor = function (fromIndex, toIndex, total, width, height) {
   if (fromIndex === null || fromIndex === undefined ||
       toIndex === null || toIndex === undefined || fromIndex === toIndex ||
       !width || !height) { return null; }
   var from = BR.seatPointFor(fromIndex, total);
   var to = BR.seatPointFor(toIndex, total);
-  return {
-    x1: Math.round((from.x / 100) * width), y1: Math.round((from.y / 100) * height),
-    x2: Math.round((to.x / 100) * width), y2: Math.round((to.y / 100) * height)
-  };
-};
-
-/* Data-driven reaction for a seat whose new card just landed, judged
-   against the previous speaker's option. The seat nods when its new
-   card moves onto the previous speaker's option, shakes when its new
-   card moves off it, and stays neutral otherwise. No reaction is
-   ever drawn from tone, only from these three option ids. */
-BR.reactionFor = function (previousOptionId, newOptionId, speakerOptionId) {
-  if (!previousOptionId || !newOptionId || !speakerOptionId) { return ""; }
-  if (newOptionId === speakerOptionId && previousOptionId !== speakerOptionId) { return "nod"; }
-  if (previousOptionId === speakerOptionId && newOptionId !== speakerOptionId) { return "shake"; }
-  return "";
+  var x1 = (from.x / 100) * width, y1 = (from.y / 100) * height;
+  var x2 = (to.x / 100) * width, y2 = (to.y / 100) * height;
+  var dx = x2 - x1, dy = y2 - y1;
+  var dist = Math.sqrt(dx * dx + dy * dy);
+  if (!dist) { return null; }
+  var inset = Math.min(80, dist * 0.3);
+  var ux = dx / dist, uy = dy / dist;
+  var sx = Math.round(x1 + ux * inset), sy = Math.round(y1 + uy * inset);
+  var tx = Math.round(x2 - ux * inset), ty = Math.round(y2 - uy * inset);
+  var mx = (sx + tx) / 2, my = (sy + ty) / 2;
+  var cx = Math.round(mx + (width / 2 - mx) * 0.35);
+  var cy = Math.round(my + (height / 2 - my) * 0.35);
+  return "M " + sx + " " + sy + " Q " + cx + " " + cy + " " + tx + " " + ty;
 };
 
 /* History dates in plain local form: "29 Oct 2026, 7:09 pm" style,
@@ -248,7 +323,7 @@ BR.formatHistoryDate = function (iso) {
   }
 };
 
-BR.renderStage = function (container, state, speakingId, rebuttal) {
+BR.renderStage = function (container, state, speakingId, rebuttal, charStates) {
   var total = state.advisors.length;
   var speakerIdx = -1;
   var targetIdx = -1;
@@ -257,7 +332,22 @@ BR.renderStage = function (container, state, speakingId, rebuttal) {
     if (rebuttal && rebuttal.to && a.id === rebuttal.to.id) { targetIdx = i; }
   });
   var speakingAdv = speakerIdx >= 0 ? state.advisors[speakerIdx] : null;
-  var html = '<div class="stage-round' + (speakingId ? ' spotlight' : '') + '">';
+  /* A live seat, thinking or speaking, spotlights the room. The
+     old code spotlit only on speakingId, so listeners never dimmed
+     during a model wait even though their state was listening. */
+  var hasLive = !!speakingId;
+  if (!hasLive && charStates) {
+    state.advisors.forEach(function (a) {
+      var st = BR.charStateFor(charStates, a.id);
+      if (st === "thinking" || st === "speaking") { hasLive = true; }
+    });
+  }
+  /* The arc, the addressed highlight, and the strip belong to the
+     CURRENT line only: the rebuttal pair must be the live
+     speaker's pair, or a line that rebuts nobody would still show
+     the previous speaker's arc and brighten the previous target. */
+  var livePair = !!(rebuttal && speakingId && rebuttal.from && rebuttal.from.id === speakingId);
+  var html = '<div class="stage-round' + (hasLive ? ' spotlight' : '') + '">';
   /* Centre table: decision title, and the current speaker. The table
      is decorative structure, not a seat, and carries no vote. */
   html += '<div class="round-table"><div class="round-table-title">' + BR.esc(state.title || "The board") + '</div>';
@@ -267,26 +357,29 @@ BR.renderStage = function (container, state, speakingId, rebuttal) {
     html += '<div class="round-table-speaker">The board</div>';
   }
   html += '</div>';
-  /* Arrow across the table, speaker to target. The line starts in
-     the same percent coordinates as the seats, and the page then
-     repositions it in pixels for the real stage box (see
-     positionArrows in main.js), so the arrowhead keeps its shape on
-     any stage width instead of stretching. The text strip below
+  /* Animated interaction arc across the table, speaker to target,
+     shown only while a line is live (speakingId set). The path
+     starts in the same percent coordinates as the seats, and the
+     page then repositions it in pixels for the real stage box (see
+     positionArrows in main.js), so the arc keeps its shape on any
+     stage width instead of stretching. The text strip below
      repeats it in words for screen readers and for plain text. */
-  if (rebuttal && rebuttal.from && rebuttal.to && speakerIdx >= 0 && targetIdx >= 0 && speakerIdx !== targetIdx) {
-    var fromPt = BR.seatPointFor(speakerIdx, total);
-    var toPt = BR.seatPointFor(targetIdx, total);
-    html += '<svg class="round-arrows" data-from-idx="' + speakerIdx + '" data-to-idx="' + targetIdx + '" data-total="' + total + '" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><defs><marker id="rt-head" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#e8a33d" /></marker></defs><line class="round-arrow-line" x1="' + fromPt.x + '" y1="' + fromPt.y + '" x2="' + toPt.x + '" y2="' + toPt.y + '" stroke="#e8a33d" stroke-width="1.5" vector-effect="non-scaling-stroke" marker-end="url(#rt-head)" /></svg>';
+  if (livePair && rebuttal.to && speakerIdx >= 0 && targetIdx >= 0 && speakerIdx !== targetIdx) {
+    var arcD = BR.arcPathFor(speakerIdx, targetIdx, total, 100, 100) || "";
+    html += '<svg class="round-arrows" data-from-idx="' + speakerIdx + '" data-to-idx="' + targetIdx + '" data-total="' + total + '" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><defs><marker id="rt-head" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#e8a33d" /></marker></defs><path class="round-arrow-line" d="' + arcD + '" fill="none" stroke="#e8a33d" stroke-width="1.5" vector-effect="non-scaling-stroke" marker-end="url(#rt-head)" /></svg>';
   }
   state.advisors.forEach(function (a, idx) {
     var found = BR.latestCardFor(state, a.id);
     var card = found ? found.card : null;
     var final = state.final[a.id];
     var speaking = speakingId === a.id;
+    var seatState = charStates
+      ? BR.charStateFor(charStates, a.id)
+      : (speaking ? "speaking" : (speakingId ? "listening" : "idle"));
     var pt = BR.seatPointFor(idx, total);
-    var cls = "stage-seat";
+    var cls = "stage-seat state-" + seatState;
     var style = "--seat-color:" + BR.esc(a.color) + ";";
-    if (speaking) {
+    if (seatState === "speaking") {
       cls += " speaking";
       if (rebuttal && rebuttal.from && rebuttal.from.id === a.id && targetIdx >= 0) {
         var vec = BR.leanVectorFor(speakerIdx, targetIdx, total);
@@ -296,33 +389,42 @@ BR.renderStage = function (container, state, speakingId, rebuttal) {
         }
       }
     }
-    else if (speakingId) { cls += " dim"; }
+    else if (seatState === "listening" && hasLive) { cls += " dim"; }
     /* Look direction: the speaker faces its target, and every idle
-       seat turns slightly toward the speaker, so the room reads as
-       listening instead of staring straight ahead. Lean stays a
-       separate seat-level translation. */
+       seat turns visibly toward the live seat, speaker or thinker,
+       so the room reads as listening instead of staring straight
+       ahead. Lean stays a separate seat-level translation. */
+    var liveIdx = speakerIdx;
+    if (liveIdx < 0 && charStates) {
+      state.advisors.forEach(function (b, j) {
+        if (BR.charStateFor(charStates, b.id) === "thinking") { liveIdx = j; }
+      });
+    }
     var look = "";
     if (speaking) {
       if (targetIdx >= 0) { look = BR.lookDirectionFor(speakerIdx, targetIdx, total); }
-    } else if (speakingId && speakerIdx >= 0) {
-      look = BR.lookDirectionFor(idx, speakerIdx, total);
+    } else if (liveIdx >= 0) {
+      look = BR.lookDirectionFor(idx, liveIdx, total);
     }
     if (look) { cls += " look-" + look; }
-    if (speakingId && rebuttal && rebuttal.to && rebuttal.to.id === a.id) { cls += " addressed"; }
+    if (livePair && rebuttal.to && rebuttal.to.id === a.id) { cls += " addressed"; }
     if (pt.y < 50) { cls += " card-below"; }
     var weight = state.director && state.director.weights[a.id] ? state.director.weights[a.id] : null;
     html += '<div class="round-seat" style="left:' + pt.x.toFixed(2) + '%;top:' + pt.y.toFixed(2) + '%;">';
     html += '<div class="' + cls + '" data-seat-id="' + BR.esc(a.id) + '" tabindex="0" role="button" aria-label="Focus ' + BR.esc(a.short) + '" style="' + style + '">';
     html += '<span class="thumb-wrap">' + BR.avatarThumb(a, speaking ? "large talking" : "large idle");
+    if (seatState === "thinking") {
+      html += '<span class="think-bubble" aria-hidden="true"><span></span><span></span><span></span></span>';
+    }
     if (final) {
       html += '<span class="vote-stamp ' + BR.voteStampClass(final.vote) + '">' + BR.esc(BR.voteStampText(final.vote)) + '</span>';
     }
     html += '</span>';
     html += '<div class="stage-name">' + BR.esc(a.short) + '</div>';
+    /* Fixed-height state label, so Thinking and Speaking never push
+       the role or status lines down when they appear. */
+    html += '<div class="state-label">' + BR.esc(seatState === "thinking" ? "Thinking" : (seatState === "speaking" ? "Speaking" : "")) + '</div>';
     html += '<div class="stage-role">' + BR.esc(a.role) + '</div>';
-    if (speaking) {
-      html += '<div class="thinking" aria-label="Speaking"><span></span><span></span><span></span></div>';
-    }
     if (final) {
       html += '<div class="stage-status"><span class="vote-badge">' + BR.esc(final.vote) + '</span> ' + BR.esc(final.finalScore) + '/10</div>';
     } else if (card) {
@@ -341,7 +443,7 @@ BR.renderStage = function (container, state, speakingId, rebuttal) {
     html += '</div></div>';
   });
   html += '</div>';
-  if (rebuttal && rebuttal.from && rebuttal.to) {
+  if (livePair && rebuttal.from && rebuttal.to) {
     html += '<div class="rebuttal-strip" data-from="' + BR.esc(rebuttal.from.id) + '" data-to="' + BR.esc(rebuttal.to.id) + '">';
     var verb = (rebuttal.kind === "discussion") ? "answers" : "rebuts";
     html += '<span>' + BR.esc(rebuttal.from.short) + ' ' + verb + ' ' + BR.esc(rebuttal.to.short) + '</span></div>';
@@ -379,7 +481,7 @@ BR.renderCruxes = function (container, state) {
   container.innerHTML = html;
 };
 
-BR.renderTranscript = function (container, state, speakingId) {
+BR.renderTranscript = function (container, state, speakingId, workingLabel) {
   if (!state || state.transcript.length === 0) {
     container.innerHTML = '<p class="muted">No conversation yet. Start a debate and every step will appear here live.</p>';
     return;
@@ -432,6 +534,10 @@ BR.renderTranscript = function (container, state, speakingId) {
     if (current) {
       html += '<div class="tx-entry tx-thinking">' + BR.avatarThumb(current, "") + '<span><strong>' + BR.esc(current.short) + '</strong> is thinking<span class="thinking"><span></span><span></span><span></span></span></span></div>';
     }
+  } else if (workingLabel && !state.completed) {
+    /* Director and draft steps have no seat, so their model wait
+       gets a Director working row instead of an idle room. */
+    html += '<div class="tx-entry tx-thinking"><span><strong>' + BR.esc(workingLabel) + '</strong> is thinking<span class="thinking"><span></span><span></span><span></span></span></span></div>';
   }
   container.innerHTML = html;
 };

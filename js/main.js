@@ -73,6 +73,8 @@ document.addEventListener("DOMContentLoaded", function () {
   var currentConsult = null;
   var running = false;
   var speakingId = null;
+  var thinkingId = null;
+  var workingLabel = null;
 
   var els = {
     title: $("d-title"), context: $("d-context"), options: $("d-options"),
@@ -100,17 +102,21 @@ document.addEventListener("DOMContentLoaded", function () {
   function renderAll() {
     if (!currentState) { return; }
     BR.renderStepper(els.stepper, currentState);
-    BR.renderStage(els.stage, currentState, speakingId, BR.currentRebuttal(currentState));
+    BR.renderStage(els.stage, currentState, speakingId, BR.currentRebuttal(currentState),
+      BR.charStatesFor(currentState.advisors, thinkingId, speakingId));
     BR.renderCruxes(els.cruxes, currentState);
     BR.renderDraft(els.draft, currentState);
-    BR.renderTranscript(els.transcript, currentState, speakingId);
+    /* The transcript's thinking line follows the thinking seat, not
+       the speaking seat: during a model wait the room shows who is
+       working, and during playback the line itself is revealing. */
+    BR.renderTranscript(els.transcript, currentState, thinkingId, workingLabel);
     BR.renderKeyPoints(els.keypoints, currentState);
     BR.renderVerdict(els.verdict, currentState);
     positionArrows();
   }
 
-  /* Arrow overlay in real pixels: after the stage renders, size the
-     SVG to the stage box and draw the speaker-to-target line between
+  /* Arc overlay in real pixels: after the stage renders, size the
+     SVG to the stage box and draw the speaker-to-target arc between
      the two seat centres, so the arrowhead keeps its shape at any
      stage width. One layout read per render, never in a loop. */
   function positionArrows() {
@@ -124,18 +130,16 @@ document.addEventListener("DOMContentLoaded", function () {
       var fromIdx = parseInt(svg.getAttribute("data-from-idx"), 10);
       var toIdx = parseInt(svg.getAttribute("data-to-idx"), 10);
       var total = parseInt(svg.getAttribute("data-total"), 10);
-      var pts = BR.arrowPointsFor ? BR.arrowPointsFor(fromIdx, toIdx, total, rect.width, rect.height) : null;
-      if (!pts) { return; }
+      if (isNaN(fromIdx) || isNaN(toIdx) || isNaN(total)) { return; }
+      var d = BR.arcPathFor ? BR.arcPathFor(fromIdx, toIdx, total, rect.width, rect.height) : null;
+      if (!d) { return; }
       svg.setAttribute("viewBox", "0 0 " + Math.round(rect.width) + " " + Math.round(rect.height));
-      var line = svg.querySelector(".round-arrow-line");
-      if (line) {
-        line.setAttribute("x1", pts.x1);
-        line.setAttribute("y1", pts.y1);
-        line.setAttribute("x2", pts.x2);
-        line.setAttribute("y2", pts.y2);
-        line.setAttribute("stroke-width", "2");
+      var path = svg.querySelector(".round-arrow-line");
+      if (path) {
+        path.setAttribute("d", d);
+        path.setAttribute("stroke-width", "2");
       }
-    } catch (e) { /* arrow placement is cosmetic; a failure never blocks the debate */ }
+    } catch (e) { /* arc placement is cosmetic; a failure never blocks the debate */ }
   }
 
   var arrowRaf = null;
@@ -234,7 +238,14 @@ document.addEventListener("DOMContentLoaded", function () {
 
   function onProgress(step, attempt) {
     stopPlayback();
-    speakingId = step.advisorId || null;
+    /* A step's model call is in flight from here until its result
+       lands, so this is the thinking state: the working seat thinks
+       visibly, every other seat listens, and nobody speaks yet.
+       Director and draft steps have no seat, so they get a Director
+       working row in the transcript instead of a thinking seat. */
+    thinkingId = step.advisorId || null;
+    workingLabel = (!step.advisorId && (step.key === "director" || step.key === "draft")) ? "The Director" : null;
+    speakingId = null;
     setStatus("Working: " + step.label + (attempt > 1 ? " (attempt " + attempt + ")" : "") + ".");
     if (currentState) { renderAll(); }
   }
@@ -275,13 +286,26 @@ document.addEventListener("DOMContentLoaded", function () {
       playbackThumbEl = null;
     }
     if (playbackSeatEl) {
-      playbackSeatEl.classList.remove("lean-left");
-      playbackSeatEl.classList.remove("lean-right");
-      playbackSeatEl.classList.remove("lean-toward");
-      playbackSeatEl.style.removeProperty("--lean-dx");
-      playbackSeatEl.style.removeProperty("--lean-dy");
+      /* Playback lean uses its own classes and variables, so
+         stopping a replay never strips the rendered speaker's
+         lean or spotlight, which belong to the last render. */
+      playbackSeatEl.classList.remove("playing-lean");
+      playbackSeatEl.style.removeProperty("--play-lean-dx");
+      playbackSeatEl.style.removeProperty("--play-lean-dy");
       playbackSeatEl = null;
     }
+    /* Only playback-only stage classes are removed here, never
+       rendered state classes: a click-to-replay must return the
+       room to exactly the state the last render left it in. */
+    try {
+      var played = els.stage.querySelectorAll(".playing, .playing-dim, .playing-addressed, .playing-spotlight");
+      played.forEach(function (el) {
+        el.classList.remove("playing");
+        el.classList.remove("playing-dim");
+        el.classList.remove("playing-addressed");
+        el.classList.remove("playing-spotlight");
+      });
+    } catch (e) { /* cosmetic only */ }
   }
 
   /* Play one transcript entry word by word: the speaker's mouth
@@ -290,14 +314,19 @@ document.addEventListener("DOMContentLoaded", function () {
      step, and for a seat's latest line when that seat is clicked or
      focused. Under reduced motion the full text stays on screen and
      no mouth cycling runs; voice still speaks when the toggle is on. */
-  function playEntry(entryEl) {
+  /* onDone fires when the line has fully revealed, so the debate
+     loop can wait for it (see onStepDone). Live playback runs at a
+     capped pace of about 3.5 seconds a line, so a live debate stays
+     fast while still visibly speaking; click-to-replay keeps the
+     slower original pace for watching one line closely. */
+  function playEntry(entryEl, onDone, live) {
     stopPlayback();
-    if (!entryEl) { return; }
+    if (!entryEl) { if (onDone) { onDone(); } return; }
     var bodyEl = entryEl.querySelector(".tx-body");
-    if (!bodyEl) { return; }
+    if (!bodyEl) { if (onDone) { onDone(); } return; }
     var fullText = bodyEl.textContent || "";
     var words = BR.splitWords ? BR.splitWords(fullText) : fullText.split(/\s+/).filter(Boolean);
-    if (words.length === 0) { return; }
+    if (words.length === 0) { if (onDone) { onDone(); } return; }
     if (voiceOn()) {
       try {
         if (window.speechSynthesis && window.SpeechSynthesisUtterance) {
@@ -306,7 +335,7 @@ document.addEventListener("DOMContentLoaded", function () {
         }
       } catch (e) { /* voice is best effort; playback continues silently */ }
     }
-    if (reducedMotion) { return; }
+    if (reducedMotion) { if (onDone) { onDone(); } return; }
     var speakerId = entryEl.getAttribute("data-speaker") || "";
     var seatEl = speakerId ? els.stage.querySelector('[data-seat-id="' + speakerId + '"]') : null;
     if (seatEl) {
@@ -328,13 +357,33 @@ document.addEventListener("DOMContentLoaded", function () {
         });
         var vec = BR.leanVectorFor ? BR.leanVectorFor(sIdx, tIdx, currentState.advisors.length) : null;
         if (vec) {
-          seatEl.classList.add("lean-toward");
-          seatEl.style.setProperty("--lean-dx", vec.dx + "px");
-          seatEl.style.setProperty("--lean-dy", vec.dy + "px");
+          seatEl.classList.add("playing-lean");
+          seatEl.style.setProperty("--play-lean-dx", vec.dx + "px");
+          seatEl.style.setProperty("--play-lean-dy", vec.dy + "px");
+        }
+      }
+      /* Visible speaking state for playback, including click-to-
+         replay where no fresh render runs: the speaker lifts and
+         spotlights, other seats dim and listen, and the addressed
+         seat brightens and turns. All playback-only classes, so
+         stopPlayback never touches the rendered state. */
+      seatEl.classList.add("playing");
+      var roundEl = els.stage.querySelector(".stage-round");
+      if (roundEl) { roundEl.classList.add("playing-spotlight"); }
+      els.stage.querySelectorAll(".stage-seat").forEach(function (el) {
+        if (el !== seatEl) { el.classList.add("playing-dim"); }
+      });
+      if (targetId) {
+        var targetEl = els.stage.querySelector('[data-seat-id="' + targetId + '"]');
+        if (targetEl) {
+          targetEl.classList.remove("playing-dim");
+          targetEl.classList.add("playing-addressed");
         }
       }
     }
-    var interval = Math.max(55, Math.min(180, Math.round(9000 / words.length)));
+    var interval = live
+      ? Math.max(30, Math.min(90, Math.round(3500 / words.length)))
+      : Math.max(55, Math.min(180, Math.round(9000 / words.length)));
     var i = 0;
     playbackBodyEl = bodyEl;
     playbackFullText = fullText;
@@ -349,51 +398,68 @@ document.addEventListener("DOMContentLoaded", function () {
       if (i >= words.length) {
         bodyEl.textContent = fullText;
         stopPlayback();
+        if (onDone) { onDone(); }
       }
     }, interval);
   }
 
-  function playLastEntry() {
-    if (!currentState || !currentState.transcript || currentState.transcript.length === 0) { return; }
+  function playLastEntry(onDone, live) {
+    if (!currentState || !currentState.transcript || currentState.transcript.length === 0) {
+      if (onDone) { onDone(); }
+      return;
+    }
     var entries = els.transcript.querySelectorAll(".tx-entry");
-    if (entries.length === 0) { return; }
-    playEntry(entries[entries.length - 1]);
+    if (entries.length === 0) { if (onDone) { onDone(); } return; }
+    playEntry(entries[entries.length - 1], onDone, live);
   }
 
   var reactionTimer = null;
 
-  /* Data-driven reaction after a debate step: the seat that just
-     spoke nods when its new card moves onto the previous speaker's
-     option, shakes when it moves off it, and stays neutral otherwise.
-     Only debate steps carry a new card, so other steps never react. */
+  /* Data-driven reaction on the ADDRESSED seat after a line, never
+     on the speaker and never from tone. A discussion reply reacts
+     from its own agree field: agree nods, disagree gives nothing,
+     and shake is reserved for a dissent vote. An argument line
+     reacts from card alignment: the target nods only when its
+     latest card recommends the same option the speaker just
+     argued for. Final votes are not addressed lines, so they get
+     no reaction here; the verdict pass reacts from final votes
+     instead (see applyVerdictReactions). A reaction is a wrapper
+     animation modifier during playback, not a rendered state: the
+     seat's state in the map stays listening, so exactly one state
+     per seat holds at all times. */
   function applyReaction() {
     if (reducedMotion || !currentState) { return; }
     if (reactionTimer) { clearTimeout(reactionTimer); reactionTimer = null; }
     var tx = currentState.transcript;
     if (!tx || tx.length === 0) { return; }
     var last = tx[tx.length - 1];
-    if (last.kind !== "argument") { return; }
-    var roundMatch = (last.title || "").match(/Debate round (\d+)/);
-    if (!roundMatch) { return; }
-    var round = parseInt(roundMatch[1], 10);
+    if (last.kind !== "argument" && last.kind !== "discussion") { return; }
     var speaker = BR.advisorByShort(currentState, last.speaker);
     if (!speaker) { return; }
-    var prevEntry = null;
-    for (var i = tx.length - 2; i >= 0; i--) {
-      if (tx[i].speaker && tx[i].speaker !== "Director" && tx[i].speaker !== last.speaker) { prevEntry = tx[i]; break; }
+    var target = null;
+    if (last.kind === "discussion" && last.targetId) {
+      currentState.advisors.forEach(function (a) { if (a.id === last.targetId) { target = a; } });
     }
-    if (!prevEntry) { return; }
-    var prevSpeaker = BR.advisorByShort(currentState, prevEntry.speaker);
-    if (!prevSpeaker) { return; }
-    var prevCard = round > 1
-      ? (currentState.debateRounds[round - 2] ? currentState.debateRounds[round - 2].cards[speaker.id] : null)
-      : currentState.opening[speaker.id];
-    var newCard = currentState.debateRounds[round - 1] ? currentState.debateRounds[round - 1].cards[speaker.id] : null;
-    var prevSpeakerCard = BR.latestCardFor(currentState, prevSpeaker.id);
-    if (!prevCard || !newCard || !prevSpeakerCard || !prevSpeakerCard.card) { return; }
-    var reaction = BR.reactionFor ? BR.reactionFor(prevCard.recommendedId, newCard.recommendedId, prevSpeakerCard.card.recommendedId) : "";
+    if (!target && last.disagreeWith) { target = BR.advisorByShort(currentState, last.disagreeWith); }
+    if (!target && last.kind === "discussion" && last.answerTo) {
+      target = BR.advisorByShort(currentState, last.answerTo) ||
+        (typeof BR.matchAdvisorByLabel === "function" ? BR.matchAdvisorByLabel(currentState, last.answerTo, speaker.id) : null);
+    }
+    if (!target || target.id === speaker.id) { return; }
+    var reaction = "";
+    if (last.kind === "discussion") {
+      reaction = (last.agree === "agree") ? "nod" : "";
+    } else {
+      var speakerCard = BR.latestCardFor(currentState, speaker.id);
+      var targetCard = BR.latestCardFor(currentState, target.id);
+      reaction = BR.targetReactionFor
+        ? BR.targetReactionFor(
+            speakerCard && speakerCard.card ? speakerCard.card.recommendedId : "",
+            targetCard && targetCard.card ? targetCard.card.recommendedId : "", "")
+        : "";
+    }
     if (!reaction) { return; }
-    var seatEl = els.stage.querySelector('[data-seat-id="' + speaker.id + '"]');
+    var seatEl = els.stage.querySelector('[data-seat-id="' + target.id + '"]');
     if (!seatEl) { return; }
     var wrap = seatEl.querySelector(".thumb-wrap");
     if (!wrap) { return; }
@@ -402,18 +468,53 @@ document.addEventListener("DOMContentLoaded", function () {
       wrap.classList.remove("react-nod");
       wrap.classList.remove("react-shake");
       reactionTimer = null;
-    }, 1300);
+    }, 1400);
+  }
+
+  /* Verdict reactions, from final votes only: every seat nods when
+     it endorsed or amended, shakes when it dissented. Runs once,
+     after the verdict renders, so the final-vote branch of
+     targetReactionFor is exercised live instead of only in tests. */
+  function applyVerdictReactions() {
+    if (reducedMotion || !currentState || !currentState.final) { return; }
+    currentState.advisors.forEach(function (a) {
+      var f = currentState.final[a.id];
+      if (!f || !f.vote) { return; }
+      var reaction = BR.targetReactionFor ? BR.targetReactionFor("", "", f.vote) : "";
+      if (!reaction) { return; }
+      var seatEl = els.stage.querySelector('[data-seat-id="' + a.id + '"]');
+      var wrap = seatEl ? seatEl.querySelector(".thumb-wrap") : null;
+      if (!wrap) { return; }
+      wrap.classList.add("react-" + reaction);
+      setTimeout(function () {
+        wrap.classList.remove("react-nod");
+        wrap.classList.remove("react-shake");
+      }, 1400);
+    });
   }
 
   function onStepDone() {
+    /* Thinking ends when the text lands. The speaker now owns the
+       speaking state while its line reveals word by word. This
+       returns the playback promise, and the engine awaits it, so
+       the line, its mouth, and its reaction all get real paint
+       time before the next seat starts thinking. Director and
+       draft lines have no seat, so they resolve at once. */
+    thinkingId = null;
+    workingLabel = null;
     speakingId = null;
+    var tx = currentState ? currentState.transcript : null;
+    if (tx && tx.length > 0) {
+      var lastSpoken = BR.advisorByShort(currentState, tx[tx.length - 1].speaker);
+      if (lastSpoken) { speakingId = lastSpoken.id; }
+    }
     var nearBottom = false;
     try {
       nearBottom = (window.scrollY + window.innerHeight) >= (document.body.scrollHeight - 240);
     } catch (e) { /* ignore */ }
     renderAll();
     applyReaction();
-    playLastEntry();
+    var playbackDone = new Promise(function (resolve) { playLastEntry(resolve, true); });
     if (nearBottom) {
       try {
         var entries = els.transcript.querySelectorAll(".tx-entry");
@@ -422,6 +523,7 @@ document.addEventListener("DOMContentLoaded", function () {
         }
       } catch (e) { /* ignore */ }
     }
+    return playbackDone;
   }
 
   function runCurrent() {
@@ -439,13 +541,19 @@ document.addEventListener("DOMContentLoaded", function () {
     return BR.runDebate(currentState, callFn, onProgress).then(function (res) {
       running = false;
       if (els.start) { els.start.disabled = false; }
+      /* Stop any playback before the final render, so no interval
+         or speech is orphaned onto detached transcript DOM. */
+      stopPlayback();
       speakingId = null;
+      thinkingId = null;
+      workingLabel = null;
       renderAll();
       if (res.ok) {
         setStatus("Debate complete. Verdict ready below.");
         BR.clearInProgress();
         BR.saveHistory(currentState);
         renderHistoryList();
+        applyVerdictReactions();
       } else {
         setStatus("Debate paused at a failed step. Fix it and retry that step only.");
         BR.saveInProgress(currentState);
@@ -464,6 +572,11 @@ document.addEventListener("DOMContentLoaded", function () {
   if (els.resumeDebate) {
     els.resumeDebate.addEventListener("click", function () {
       if (running) { return; }
+      stopPlayback();
+      speakingId = null;
+      thinkingId = null;
+      workingLabel = null;
+      if (reactionTimer) { clearTimeout(reactionTimer); reactionTimer = null; }
       var saved = BR.loadInProgress();
       if (!saved) { return; }
       currentState = saved;
@@ -492,6 +605,11 @@ document.addEventListener("DOMContentLoaded", function () {
     var items = els.history.querySelectorAll(".history-item");
     items.forEach(function (btn) {
       btn.addEventListener("click", function () {
+        stopPlayback();
+        speakingId = null;
+        thinkingId = null;
+        workingLabel = null;
+        if (reactionTimer) { clearTimeout(reactionTimer); reactionTimer = null; }
         var id = btn.getAttribute("data-session-id");
         var found = null;
         list.forEach(function (s) { if (s.id === id) { found = s; } });
@@ -512,6 +630,10 @@ document.addEventListener("DOMContentLoaded", function () {
     if (running) { return; }
     stopPlayback();
     if (els.start) { els.start.disabled = false; }
+    speakingId = null;
+    thinkingId = null;
+    workingLabel = null;
+    if (reactionTimer) { clearTimeout(reactionTimer); reactionTimer = null; }
     currentState = null;
     currentConsult = null;
     els.debateView.classList.add("hidden");
@@ -622,7 +744,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (reducedMotion) { return; }
     var delay = 2400 + Math.random() * 4200;
     setTimeout(function () {
-      var thumbs = els.stage.querySelectorAll(".stage-seat:not(.speaking) .thumb");
+      var thumbs = els.stage.querySelectorAll(".stage-seat:not(.speaking):not(.playing) .thumb");
       if (thumbs.length > 0 && !els.debateView.classList.contains("hidden")) {
         var pick = thumbs[Math.floor(Math.random() * thumbs.length)];
         pick.classList.add("blinking");
