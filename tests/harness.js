@@ -605,6 +605,22 @@ async function main() {
   const emptyOpts = BR.createDebate({ title: "T", context: "C", options: [], rounds: 1, provider: "groq", model: "m", advisors: BR.PERSONAS.slice() });
   assert("empty options fall back to do-it plus do-nothing", emptyOpts.options.length === 2, JSON.stringify(emptyOpts.options));
 
+  /* ---------- Option marker stripping (no doubled "Option B B:") ---------- */
+  const stripState = BR.createDebate({ title: "T", context: "C", options: ["B: Paid pilot at full price", "2. Keep the price", "Option C: Free audit", "Plain label"], rounds: 1, provider: "groq", model: "m", advisors: BR.PERSONAS.slice() });
+  assert("option markers are stripped before storage",
+    eq(stripState.options.map(function (o) { return o.label; }),
+      ["Paid pilot at full price", "Keep the price", "Free audit", "Plain label", "Do nothing"]),
+    JSON.stringify(stripState.options));
+  const plainState = BR.createDebate({ title: "T", context: "C", options: ["Build the thing", "Email setup", "2024 roadmap", "B Paid pilot"], rounds: 1, provider: "groq", model: "m", advisors: BR.PERSONAS.slice() });
+  assert("labels without a marker are untouched",
+    eq(plainState.options.map(function (o) { return o.label; }),
+      ["Build the thing", "Email setup", "2024 roadmap", "B Paid pilot", "Do nothing"]),
+    JSON.stringify(plainState.options));
+  const dupeState = BR.createDebate({ title: "T", context: "C", options: ["B: Paid pilot", "Paid pilot"], rounds: 1, provider: "groq", model: "m", advisors: BR.PERSONAS.slice() });
+  assert("dedupe runs after stripping, so a marked and plain twin collapse",
+    eq(dupeState.options.map(function (o) { return o.label; }), ["Paid pilot", "Do nothing"]),
+    JSON.stringify(dupeState.options));
+
   /* ---------- Personas ---------- */
   assert("eight personas shipped", BR.PERSONAS.length === 8, String(BR.PERSONAS.length));
   assert("every persona has a prompt", BR.PERSONAS.every(function (p) { return BR.personaPromptFor(p).length > 200; }));
@@ -757,7 +773,30 @@ async function main() {
       var top = BR.seatPointFor(0, 8);
       var right = BR.seatPointFor(2, 8);
       var vec = BR.leanVectorFor(0, 2, 8);
-      return Math.abs(top.x - 50) < 0.01 && top.y < 10 && right.x > 90 && vec && vec.dx > 0 && vec.dy > 0;
+      return Math.abs(top.x - 50) < 0.01 && top.y < 14 && right.x > 90 && vec && vec.dx > 0 && vec.dy > 0;
+    })());
+  assert("stage seats fit the stage box at the seat-centre half-block measure and the bottom margin clears the strip",
+    (function () {
+      /* Seat centres run from 13 percent (top) to 87 percent (bottom)
+         at the 37 percent y radius. The half-block measure here is
+         72px, half the 144px seat width, against the 560px stage
+         height, about 12.86 percent: 87 + 12.86 stays under 100. The
+         full seat block is taller, about 205px, so its bottom edge
+         still extends about 30px past the 560px box; the 120px bottom
+         margin on .stage-round is what pushes the rebuttal strip and
+         the stage note below that edge. Both halves are asserted so
+         neither the radius nor the margin can silently regress. */
+      var css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
+      var marginOk = css.indexOf("margin: 12px 0 120px") !== -1;
+      function fits(total) {
+        for (var i = 0; i < total; i++) {
+          var pt = BR.seatPointFor(i, total);
+          if (pt.y < 13 - 0.01 || pt.y > 87 + 0.01) { return false; }
+          if (pt.y + (72 / 560) * 100 > 100) { return false; }
+        }
+        return true;
+      }
+      return marginOk && fits(8) && fits(9);
     })());
   assert("resume skips completed steps and reports a completed debate as done",
     (function () {
@@ -887,7 +926,7 @@ async function main() {
   assert("arrow endpoints land on seat centres in stage pixels",
     (function () {
       var pts = BR.arrowPointsFor(0, 2, 8, 800, 560);
-      return !!pts && pts.x1 === 400 && pts.y1 === 34 && pts.x2 === 736 && pts.y2 === 280 &&
+      return !!pts && pts.x1 === 400 && pts.y1 === 73 && pts.x2 === 736 && pts.y2 === 280 &&
         BR.arrowPointsFor(0, 0, 8, 800, 560) === null;
     })());
   assert("history dates render in readable local form without an invented timezone",
@@ -989,6 +1028,57 @@ async function main() {
       return html.indexOf('id="resume-panel"') !== -1 && html.indexOf('id="resume-debate"') !== -1 &&
         html.indexOf('id="resume-discard"') !== -1;
     })());
+
+  /* ---------- Key points verdict branch shows the final vote ---------- */
+  assert("key points verdict branch shows final vote and score, not the debate stance",
+    (function () {
+      const kp = makeDebate(1);
+      kp.director = { weights: {}, cruxes: [], brief: "B.", assumptions: [] };
+      BR.PERSONAS.forEach(function (p) { kp.director.weights[p.id] = { weight: 1, reason: "R." }; });
+      kp.debateRounds = [{ round: 1, cards: {} }];
+      BR.PERSONAS.forEach(function (p) {
+        kp.debateRounds[0].cards[p.id] = { stance: "Strong no", recommendedId: "A", optionScores: { A: 2, B: 8, C: 3 }, pillarScore: 5, confidence: 4, ruinRisk: "none", door: "two-way", reason: "R.", changeMind: "N." };
+      });
+      kp.final = {};
+      BR.PERSONAS.forEach(function (p) { kp.final[p.id] = { vote: "Endorse with amendment", finalScore: 8, line: "L." }; });
+      kp.verdict = { pillarScores: {} };
+      BR.PERSONAS.forEach(function (p) { kp.verdict.pillarScores[p.id] = 5; });
+      const c = { innerHTML: "" };
+      BR.renderKeyPoints(c, kp);
+      return c.innerHTML.indexOf("Endorse with amendment (8/10)") !== -1 && c.innerHTML.indexOf("Strong no") === -1;
+    })());
+  assert("key points verdict branch falls back to the latest stance only with no final vote",
+    (function () {
+      const kp = makeDebate(1);
+      kp.director = { weights: {}, cruxes: [], brief: "B.", assumptions: [] };
+      BR.PERSONAS.forEach(function (p) { kp.director.weights[p.id] = { weight: 1, reason: "R." }; });
+      kp.debateRounds = [{ round: 1, cards: {} }];
+      BR.PERSONAS.forEach(function (p) {
+        kp.debateRounds[0].cards[p.id] = { stance: "Strong no", recommendedId: "A", optionScores: { A: 2, B: 8, C: 3 }, pillarScore: 5, confidence: 4, ruinRisk: "none", door: "two-way", reason: "R.", changeMind: "N." };
+      });
+      kp.final = {};
+      kp.verdict = { pillarScores: {} };
+      BR.PERSONAS.forEach(function (p) { kp.verdict.pillarScores[p.id] = 5; });
+      const c = { innerHTML: "" };
+      BR.renderKeyPoints(c, kp);
+      return c.innerHTML.indexOf("Strong no") !== -1;
+    })());
+
+  /* ---------- Empty fallback reply reads plainly ---------- */
+  await (async function () {
+    const oldFetch = sandbox.fetch;
+    sandbox.fetch = async function () {
+      return { ok: true, status: 200, json: async function () { return { ok: false, status: 200, body: "", fallbackExhausted: true, fallbackStatus: 200, fallbackBody: "" }; } };
+    };
+    try {
+      const res = await BR.callLLM("groq", "openai/gpt-oss-120b", "sys", "usr");
+      assert("empty fallback reply says the fallback returned no usable reply",
+        !res.ok && res.error && res.error.message.indexOf("fallback returned no usable reply") !== -1,
+        JSON.stringify(res));
+    } finally {
+      if (oldFetch === undefined) { delete sandbox.fetch; } else { sandbox.fetch = oldFetch; }
+    }
+  })();
 
   /* ---------- Server function: OpenRouter fallback ---------- */
   await serverTests();
