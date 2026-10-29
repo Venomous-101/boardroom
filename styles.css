@@ -10,6 +10,13 @@ body {
   line-height: 1.55;
 }
 
+/* Headings in a classic serif, body in the system sans. No external
+   fonts are loaded, and headings stay in sentence case. */
+h1, h2, h3 {
+  font-family: Georgia, "Times New Roman", serif;
+  letter-spacing: -0.2px;
+}
+
 .topbar {
   max-width: 1080px;
   margin: 0 auto;
@@ -30,29 +37,37 @@ main { max-width: 1080px; margin: 0 auto; padding: 12px 20px 40px; }
 .panel {
   background: #171e26;
   border: 1px solid #26303c;
-  border-radius: 12px;
-  padding: 20px 22px;
-  margin: 18px 0;
+  border-radius: 10px;
+  padding: 22px 24px;
+  margin: 20px 0;
 }
 
-h2 { font-size: 20px; margin: 0 0 14px; }
-h3 { font-size: 15px; margin: 20px 0 8px; }
+h2 { font-size: 22px; margin: 0 0 14px; }
+h3 { font-size: 16px; margin: 22px 0 8px; }
 
 label { display: block; font-size: 14px; font-weight: 600; margin: 12px 0; }
 input[type="text"], textarea, select {
   display: block;
   width: 100%;
   margin-top: 6px;
-  padding: 10px 12px;
+  padding: 12px;
   background: #0f1419;
   border: 1px solid #2e3a47;
-  border-radius: 8px;
+  border-radius: 6px;
   color: #e8ecf1;
   font-size: 15px;
   font-family: inherit;
 }
 textarea { resize: vertical; }
 input:focus, textarea:focus, select:focus { outline: 2px solid #e8a33d; border-color: #e8a33d; }
+button:focus-visible, .stage-seat:focus-visible { outline: 2px solid #e8a33d; outline-offset: 2px; }
+
+/* Live character counters and specific form errors, under the
+   fields they belong to. */
+.counter { display: block; color: #9aa7b4; font-size: 12px; font-weight: 400; margin-top: 4px; }
+.form-errors { border-color: #7a3b3b; background: #2a1a1c; border-radius: 8px; padding: 10px 14px; font-size: 14px; }
+.form-errors ul { margin: 4px 0; padding-left: 20px; }
+.form-errors li { margin: 4px 0; }
 
 .form-grid {
   display: grid;
@@ -65,11 +80,13 @@ button {
   background: #e8a33d;
   color: #14100a;
   border: none;
-  border-radius: 8px;
-  padding: 10px 16px;
+  border-radius: 6px;
+  padding: 12px 18px;
+  min-height: 44px;
   font-size: 15px;
   font-weight: 700;
   cursor: pointer;
+  touch-action: manipulation;
 }
 button.secondary { background: transparent; color: #e8ecf1; border: 1px solid #3a4756; }
 button:hover { filter: brightness(1.08); }
@@ -131,7 +148,7 @@ button:disabled { opacity: 0.55; cursor: default; }
   padding: 20px;
   z-index: 1;
 }
-.round-table-title { font-weight: 800; font-size: 16px; line-height: 1.35; }
+.round-table-title { font-weight: 800; font-size: clamp(13px, 1.6vw, 16px); line-height: 1.35; overflow-wrap: anywhere; }
 .round-table-speaker { color: #9aa7b4; font-size: 13px; margin-top: 6px; }
 .round-arrows {
   position: absolute; inset: 0;
@@ -143,11 +160,12 @@ button:disabled { opacity: 0.55; cursor: default; }
 .stage-seat {
   position: relative;
   width: 144px; text-align: center;
-  padding: 10px 6px; border-radius: 12px;
+  padding: 10px 6px; border-radius: 10px;
   border: 1px solid transparent;
   cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition: transform 0.2s ease;
 }
+.stage-seat.addressed { border-color: #e8a33d; background: #1a222c; }
 .stage-seat.dim { opacity: 0.45; }
 .stage.spotlight .stage-seat.dim { opacity: 0.35; }
 .stage-seat.speaking {
@@ -165,9 +183,10 @@ button:disabled { opacity: 0.55; cursor: default; }
 .stage-seat:hover { transform: translateY(-4px); }
 .stage-seat:hover .seat-card, .stage-seat:focus-within .seat-card { display: block; }
 .stage-seat.card-below .seat-card { bottom: auto; top: 100%; }
-.stage-name { font-weight: 800; margin-top: 8px; }
-.stage-role { color: #9aa7b4; font-size: 12px; }
-.stage-status { margin-top: 6px; font-size: 13px; }
+.stage-name { font-weight: 800; margin-top: 8px; overflow-wrap: anywhere; }
+.stage-role { color: #9aa7b4; font-size: 12px; min-height: 30px; overflow-wrap: anywhere; }
+.stage-status { margin-top: 6px; font-size: 12px; min-height: 22px; overflow-wrap: anywhere; }
+.stage-status .vote-badge { display: inline-block; }
 .stage-note { margin: 4px 0 20px; }
 .sim-note { font-size: 12px; }
 
@@ -188,8 +207,8 @@ button:disabled { opacity: 0.55; cursor: default; }
 .vote-stamp {
   position: absolute; right: -6px; bottom: -2px; z-index: 2;
   transform: rotate(-8deg);
-  font-size: 10px; font-weight: 900; letter-spacing: 0.5px;
-  padding: 2px 7px; border-radius: 4px; border: 2px solid #fff; color: #fff;
+  font-size: 11px; font-weight: 900; letter-spacing: 0.5px;
+  padding: 3px 8px; border-radius: 4px; border: 2px solid #fff; color: #fff;
 }
 .vote-stamp.endorse { background: #2e7d32; }
 .vote-stamp.amend { background: #b7791f; }
@@ -200,12 +219,15 @@ button:disabled { opacity: 0.55; cursor: default; }
 .rebuttal-strip svg { flex: none; }
 .rebuttal-arrow { flex: none; }
 
-/* Click-to-focus highlight. */
-.tx-entry.focused, .kp-item.focused { outline: 2px solid #e8a33d; }
+/* Click-to-focus highlight: outline plus a tint, so the focused
+   entry reads at a glance, not only on close inspection. */
+.tx-entry.focused, .kp-item.focused { outline: 2px solid #e8a33d; background: #1f2a36; }
 
 /* Round avatar thumb: initials underneath, portrait on top.
    Stage thumbs are 96px; transcript and key-point thumbs are 40px.
-   Idle thumbs breathe; speaking thumbs pulse; blink dips opacity. */
+   Idle thumbs breathe; speaking thumbs pulse. The blink is an
+   eyelid that scales down over the top of the portrait and back,
+   not an opacity flicker of the whole portrait. */
 .thumb {
   position: relative; display: inline-block;
   width: 40px; height: 40px; min-width: 40px;
@@ -234,23 +256,60 @@ button:disabled { opacity: 0.55; cursor: default; }
   0% { transform: scale(0.95); opacity: 0.8; }
   100% { transform: scale(1.25); opacity: 0; }
 }
-.thumb.blinking .thumb-img, .thumb.blinking .thumb-initials { opacity: 0.2; }
+.thumb .eyelid {
+  display: block;
+  position: absolute; left: 0; top: 0; width: 100%; height: 55%;
+  background: #0f1419; z-index: 3;
+  border-radius: 0 0 50% 50%;
+  transform: scaleY(0); transform-origin: top center;
+}
+.thumb.blinking .eyelid { animation: eyelid 260ms ease-in-out; }
+@keyframes eyelid {
+  0% { transform: scaleY(0); }
+  45% { transform: scaleY(1); }
+  100% { transform: scaleY(0); }
+}
 
 /* Speaking playback: a stylised mouth bar on the portrait thumb.
-   It is an indicator that cycles with the spoken word, not lip-sync.
-   Hidden unless a mouth state class is present. */
+   It moves with the spoken word, not lip-sync. Hidden unless a
+   mouth state class is present. Size changes use transform only,
+   never height, so the bar never reflows the portrait. */
 .thumb .mouth {
   display: none;
   position: absolute; left: 50%; bottom: 12%;
-  transform: translateX(-50%);
-  width: 22%; background: #0f1419;
+  transform: translateX(-50%) scaleY(0.15);
+  transform-origin: bottom center;
+  width: 22%; height: 12px; background: #0f1419;
   border-radius: 4px; z-index: 2;
-  transition: height 120ms ease;
+  transition: transform 120ms ease;
 }
 .thumb.large .mouth { width: 18%; }
-.thumb.mouth-closed .mouth { display: block; height: 2px; }
-.thumb.mouth-mid .mouth { display: block; height: 6px; }
-.thumb.mouth-open .mouth { display: block; height: 12px; }
+.thumb.mouth-closed .mouth { display: block; transform: translateX(-50%) scaleY(0.15); }
+.thumb.mouth-mid .mouth { display: block; transform: translateX(-50%) scaleY(0.5); }
+.thumb.mouth-open .mouth { display: block; transform: translateX(-50%) scaleY(1); }
+
+/* Look direction and reactions, on the thumb wrapper so they never
+   fight the thumb's own breathing animation. A look is a small
+   turn toward the speaker or the target. A nod is a short down
+   tilt, a shake is a short side-to-side turn, each driven only by
+   card movement in the debate data. */
+.thumb-wrap { transition: transform 180ms ease; }
+.stage-seat.look-left .thumb-wrap { transform: translateX(-5px) rotate(-5deg); }
+.stage-seat.look-right .thumb-wrap { transform: translateX(5px) rotate(5deg); }
+.thumb-wrap.react-nod { animation: nod 1.2s ease-in-out; }
+.thumb-wrap.react-shake { animation: shake 1.2s ease-in-out; }
+@keyframes nod {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  25% { transform: translateY(2px) rotate(3deg); }
+  50% { transform: translateY(0) rotate(0deg); }
+  75% { transform: translateY(2px) rotate(3deg); }
+}
+@keyframes shake {
+  0%, 100% { transform: translateX(0) rotate(0deg); }
+  25% { transform: translateX(-4px) rotate(-3deg); }
+  50% { transform: translateX(4px) rotate(3deg); }
+  75% { transform: translateX(-4px) rotate(-3deg); }
+}
 
 /* Lean toward the seat being answered. Uses the CSS translate
    property, so it composes with the speaking bob transform instead
@@ -272,7 +331,11 @@ button:disabled { opacity: 0.55; cursor: default; }
   .thumb.idle { animation: none; }
   .thumb.talking::after { animation: none; }
   .thumb .mouth { transition: none; }
+  .thumb.blinking .eyelid { animation: none; }
+  .thumb-wrap.react-nod, .thumb-wrap.react-shake { animation: none; }
+  .stage-seat.look-left .thumb-wrap, .stage-seat.look-right .thumb-wrap { transform: none; }
   .stage-seat.lean-left, .stage-seat.lean-right, .stage-seat.lean-toward { translate: 0 0; }
+  .thinking span { animation: none; }
 }
 
 /* Thinking dots, used on the speaking seat and in the transcript. */
@@ -297,11 +360,12 @@ button:disabled { opacity: 0.55; cursor: default; }
 }
 
 .transcript { display: flex; flex-direction: column; gap: 10px; margin: 12px 0 24px; }
-.tx-entry { background: #171e26; border: 1px solid #26303c; border-radius: 10px; padding: 12px 16px; }
-.tx-head { display: flex; gap: 10px; align-items: center; margin-bottom: 4px; }
+.tx-entry { background: #171e26; border: 1px solid #26303c; border-radius: 10px; padding: 14px 16px; }
+.tx-head { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; margin-bottom: 4px; }
 .tx-speaker { font-weight: 800; }
 .tx-kind { color: #9aa7b4; font-size: 13px; }
-.tx-body { font-size: 15px; }
+.tx-body { font-size: 15px; max-width: 72ch; overflow-wrap: anywhere; }
+.tx-rebuts { overflow-wrap: anywhere; }
 .tx-advisor { display: flex; gap: 12px; align-items: flex-start; }
 .tx-content { min-width: 0; flex: 1; }
 .tx-director { background: #1a222c; border-left: 4px solid #e8a33d; }
@@ -315,17 +379,22 @@ button:disabled { opacity: 0.55; cursor: default; }
   border-radius: 10px; padding: 12px; margin-bottom: 10px;
 }
 .kp-content { min-width: 0; flex: 1; }
-.kp-head { display: flex; justify-content: space-between; gap: 8px; }
-.kp-name { font-weight: 800; }
-.kp-weight { color: #9aa7b4; font-size: 12px; white-space: nowrap; }
-.kp-line { margin-top: 6px; }
+.kp-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.kp-name { font-weight: 800; overflow-wrap: anywhere; }
+.kp-weight { color: #9aa7b4; font-size: 12px; text-align: right; flex: none; }
+.kp-line { margin-top: 6px; overflow-wrap: anywhere; }
+
+/* Tables scroll inside their panel on narrow screens instead of
+   pushing the whole page sideways. */
+.table-scroll { overflow-x: auto; }
+.table-scroll table { min-width: 520px; }
 .kp-meta { color: #9aa7b4; font-size: 12px; margin-top: 4px; }
 .kp-weight-reason { color: #9aa7b4; font-size: 12px; margin-top: 2px; }
-.kp-reason { font-size: 14px; margin-top: 4px; }
+.kp-reason { font-size: 14px; margin-top: 4px; overflow-wrap: anywhere; }
 
 /* Chair weights table in the brief panel. */
 .weights-table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
-.weights-table th, .weights-table td { border: 1px solid #2a3441; padding: 8px 10px; text-align: left; }
+.weights-table th, .weights-table td { border: 1px solid #2a3441; padding: 8px 10px; text-align: left; overflow-wrap: anywhere; }
 .weights-table th { background: #1a222c; }
 
 /* Draft resolution panel. */
@@ -357,7 +426,7 @@ details summary { cursor: pointer; font-weight: 700; margin: 16px 0 8px; }
 .vote-badge.waiting { background: #5a6b7a; }
 
 .score-table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
-.score-table th, .score-table td { border: 1px solid #2a3441; padding: 8px 10px; text-align: left; }
+.score-table th, .score-table td { border: 1px solid #2a3441; padding: 8px 10px; text-align: left; overflow-wrap: anywhere; }
 .score-table th { background: #1a222c; }
 .math-lines { color: #c6d0da; font-size: 14px; margin: 8px 0 20px; }
 
@@ -382,6 +451,10 @@ details summary { cursor: pointer; font-weight: 700; margin: 16px 0 8px; }
 footer {
   max-width: 1080px; margin: 0 auto; padding: 0 20px 40px;
   color: #9aa7b4; font-size: 13px;
+}
+
+@media (max-width: 900px) {
+  .round-table { width: min(54%, 420px); }
 }
 
 @media (max-width: 850px) {
@@ -410,9 +483,9 @@ footer {
 
 @media print {
   body { background: #fff; color: #111; }
-  #setup-form, #history-panel, .view-controls, .consult-controls, .status, #error-box, footer, .topbar .disclaimer, #stepper, #stage { display: none !important; }
+  #setup-form, #history-panel, .view-controls, .consult-controls, .status, #error-box, #resume-panel, footer, .topbar .disclaimer, #stepper, #stage { display: none !important; }
   #debate-view { display: block !important; }
-  .panel, .tx-entry, .kp-item { background: #fff; color: #111; border-color: #ccc; }
+  .panel, .tx-entry, .kp-item { background: #fff; color: #111; border-color: #ccc; break-inside: avoid; }
   .muted, .tx-kind, .kp-meta, .kp-weight { color: #444; }
   .verdict-label { background: #ddd; color: #111; }
   .room-layout { grid-template-columns: 1fr; }

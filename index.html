@@ -22,9 +22,11 @@
     <p class="muted">No API key is entered here. Calls go through this deployment's own server function, which holds the key server-side. Setup for your own deployment is in the README.</p>
     <label>Decision title
       <input type="text" id="d-title" maxlength="200" placeholder="Example: Should I raise my coaching price to $3,500?">
+      <span class="counter" id="count-title">0 / 200 characters</span>
     </label>
     <label>Context
       <textarea id="d-context" maxlength="4000" rows="5" placeholder="What you sell, to whom, revenue, cash, team size, deadline, what success looks like, and which way you are leaning. The board tests your lean instead of agreeing with it."></textarea>
+      <span class="counter" id="count-context">0 / 4000 characters</span>
     </label>
     <label>Options, one per line (up to 4)
       <textarea id="d-options" rows="4" placeholder="Raise to $3,500 for everyone now&#10;Raise for new clients only&#10;Keep $2,000"></textarea>
@@ -64,9 +66,12 @@
         <input type="text" id="d-model" value="openai/gpt-oss-120b">
       </label>
     </div>
-    <p class="muted">Full runs the whole council: brief, openings, fault lines, debate, an adversarial discussion round where each seat first steelmans another seat's actual point in a labelled field, attacks its weakest premise, concedes only when beaten with a reason, and prices being wrong, draft resolution, vote, verdict. Discussion targets are assigned so seats do not all pile onto one opponent. Quick skips debate rounds, the discussion round, and the draft stage. Consult asks one seat a single question, with no scoring and no saved session.</p>
-    <p class="muted">Each seat speaks from a distilled brain slice for that step, never a whole brain at once. Debate and discussion slices carry the seat's sharpest test; final slices carry the strongest counter to the seat's own lens. The seats sit around a round table, with the decision title in the centre, and arrows run across the table from speaker to target. After each step, the latest line plays back word by word on the stage, with mouth states and a lean toward the seat being answered, using the real table angle. Voice is optional, uses only your browser's built-in speech, and is off by default.</p>
-    <p class="muted">If Groq hits its rate limit, the server instantly tries free OpenRouter models instead, with no extra click. Each transcript step shows a small badge naming which provider and model served it. If every free fallback fails, the error now names the fallback status and detail, and explains the OpenRouter free limits, so a daily cap reads as a daily cap, not as a mystery. If a debate is interrupted, reload and resume it from the next undone step; earlier steps are not rerun.</p>
+    <details>
+      <summary>How a debate works</summary>
+      <p class="muted">Full runs the whole council: brief, openings, fault lines, debate, an adversarial discussion round where each seat first steelmans another seat's actual point in a labelled field, attacks its weakest premise, concedes only when beaten with a reason, and prices being wrong, draft resolution, vote, verdict. Discussion targets are assigned so seats do not all pile onto one opponent, and a target name that is a topic, pillar, or dimension is resolved to the seat that owns it, so a card always answers a real seat. Quick skips debate rounds, the discussion round, and the draft stage. Consult asks one seat a single question, with no scoring and no saved session.</p>
+      <p class="muted">Each seat speaks from a distilled brain slice for that step, never a whole brain at once. Debate and discussion slices carry the seat's sharpest test; final slices carry the strongest counter to the seat's own lens. The seats sit around a round table, with the decision title in the centre, and arrows run across the table from speaker to target. After each step, the latest line plays back word by word on the stage: the speaking character's mouth moves with the words, it turns and leans toward the seat it answers using the real table angle, idle seats turn toward the speaker, and a seat nods or shakes when its new card moves toward or away from the previous speaker's option. Clicking a seat, or focusing it with the keyboard, focuses its latest line and replays it the same way. Voice is optional, uses only your browser's built-in speech, and is off by default. The mouth movement is a stylised indicator, not lip-sync to a real person.</p>
+      <p class="muted">When Groq is rate-limited, the server tries free OpenRouter models in the same call, with no extra click. Each transcript step shows a small badge naming which provider and model served it. A fallback attempt can still fail, for example by timing out; then the step pauses with the fallback status and detail shown, and a retry runs only that step. If every free fallback fails, the error explains the OpenRouter free limits, so a daily cap reads as a daily cap, not as a mystery. If a debate is interrupted, reload and resume it from the next undone step; earlier steps are not rerun.</p>
+    </details>
     <div id="consult-seat-row" class="hidden">
       <label>Consult seat
         <select id="d-consult-seat"></select>
@@ -76,10 +81,13 @@
     <p class="muted">Add one advisor of your own. Give a name and the viewpoint it must argue from, and it joins the debate like any other seat.</p>
     <label>Custom advisor name
       <input type="text" id="d-custom-name" maxlength="60" placeholder="Example: The Skeptic">
+      <span class="counter" id="count-custom-name">0 / 60 characters</span>
     </label>
     <label>Custom advisor viewpoint
       <textarea id="d-custom-view" maxlength="500" rows="3" placeholder="Example: Argue that most growth plans fail on distribution, not product, and demand proof of a working channel before any spend."></textarea>
+      <span class="counter" id="count-custom-view">0 / 500 characters</span>
     </label>
+    <p id="form-errors" class="form-errors hidden" role="alert"></p>
     <div class="btn-row">
       <button id="start-debate" type="button" class="primary">Start the board</button>
     </div>
@@ -88,6 +96,7 @@
   <p id="status" class="status" aria-live="polite"></p>
 
   <div id="resume-panel" class="panel hidden">
+    <h2>Resume an unfinished debate</h2>
     <p id="resume-text"></p>
     <div class="btn-row">
       <button id="resume-debate" type="button">Resume debate</button>
@@ -114,7 +123,7 @@
       <label class="voice-toggle-label"><input type="checkbox" id="voice-toggle"> Voice (browser speech only, off by default)</label>
     </div>
 
-    <nav id="stepper"></nav>
+    <div id="stepper"></div>
 
     <h2>The board</h2>
     <div id="stage"></div>
