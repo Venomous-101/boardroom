@@ -57,11 +57,25 @@ BR.topOptionOf = function (card, optionIds) {
 
 /* ---------- Input ---------- */
 
+/* Strip a leading option marker from an entered label, so a label
+   typed as "B: Paid pilot" is stored as "Paid pilot" and renderers
+   that prefix "Option B " never double it. Only a single letter
+   A to E or digit 1 to 4 followed by punctuation and a space, or an
+   "Option B:" style prefix, is stripped. A label with no marker, or
+   a word that merely starts with such a letter, is untouched. */
+BR.stripOptionMarker = function (value) {
+  var s = (value === null || value === undefined) ? "" : String(value).trim();
+  var out = s.replace(/^option\s+[A-Ea-e1-4]\s*[:.\)\-]\s+/i, "");
+  if (out === s) { out = s.replace(/^[A-Ea-e1-4]\s*[:.\)\-]\s+/, ""); }
+  out = out.trim();
+  return out ? out : s;
+};
+
 BR.createDebate = function (input) {
   var options = [];
   var seen = {};
   (input.options || []).forEach(function (label) {
-    var clean = BR.clampText((label || "").trim(), 120);
+    var clean = BR.clampText(BR.stripOptionMarker(label), 120);
     if (clean && options.length < BR.LIMITS.options && !seen[clean]) {
       seen[clean] = true;
       options.push(clean);

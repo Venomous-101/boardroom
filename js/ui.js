@@ -170,7 +170,7 @@ BR.renderStepper = function (container, state) {
 BR.seatPointFor = function (index, total) {
   var n = total > 0 ? total : 1;
   var rad = (-90 + (index * 360) / n) * Math.PI / 180;
-  return { x: 50 + 42 * Math.cos(rad), y: 50 + 44 * Math.sin(rad) };
+  return { x: 50 + 42 * Math.cos(rad), y: 50 + 37 * Math.sin(rad) };
 };
 
 /* Lean toward the addressed seat as a real vector on the table, not
@@ -442,13 +442,14 @@ BR.renderTranscript = function (container, state, speakingId) {
 BR.renderKeyPoints = function (container, state) {
   if (state.verdict) {
     var v = state.verdict;
-    var html = '<div class="table-scroll"><table class="score-table"><thead><tr><th>Seat</th><th>Weight</th><th>Final stance</th><th>Pillar</th><th>Line</th></tr></thead><tbody>';
+    var html = '<div class="table-scroll"><table class="score-table"><thead><tr><th>Seat</th><th>Weight</th><th>Final vote</th><th>Pillar</th><th>Line</th></tr></thead><tbody>';
     state.advisors.forEach(function (a) {
       var w = state.director.weights[a.id] ? state.director.weights[a.id].weight : 1;
       var latest = BR.latestCardFor(state, a.id);
       var f = state.final[a.id];
+      var finalCell = (f && f.vote && isFinite(Number(f.finalScore))) ? f.vote + " (" + f.finalScore + "/10)" : (latest ? latest.card.stance : "");
       html += '<tr><td>' + BR.esc(a.short) + '</td><td>' + BR.esc(w) + '</td>';
-      html += '<td>' + BR.esc(latest ? latest.card.stance : "") + '</td>';
+      html += '<td>' + BR.esc(finalCell) + '</td>';
       html += '<td>' + BR.esc(v.pillarScores[a.id]) + '/10</td>';
       html += '<td>' + BR.esc(f ? f.line : "") + '</td></tr>';
     });

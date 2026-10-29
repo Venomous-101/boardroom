@@ -160,6 +160,9 @@ BR.callLLM = function (providerId, model, systemPrompt, userPrompt) {
       }
       if (data && typeof data.status === "number") {
         if (data.status === 200 && !data.body) {
+          if (data.fallbackExhausted) {
+            return { ok: false, error: { code: "empty_response", message: "The OpenRouter free fallback returned no usable reply. Retry this step." } };
+          }
           return { ok: false, error: { code: "empty_response", message: provider.label + " returned an empty response. Retry this step." } };
         }
         var mapped = BR.mapProviderError(provider.id, data.status, data.body);
