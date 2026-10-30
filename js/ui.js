@@ -239,7 +239,7 @@ BR.leanVectorFor = function (speakerIndex, targetIndex, total) {
   var dy = to.y - from.y;
   var len = Math.sqrt(dx * dx + dy * dy);
   if (len === 0) { return null; }
-  return { dx: Math.round((dx / len) * 14), dy: Math.round((dy / len) * 14) };
+  return { dx: Math.round((dx / len) * 20), dy: Math.round((dy / len) * 20) };
 };
 
 /* Look direction on the table: which way a seat faces, from the real
@@ -366,7 +366,7 @@ BR.renderStage = function (container, state, speakingId, rebuttal, charStates) {
      repeats it in words for screen readers and for plain text. */
   if (livePair && rebuttal.to && speakerIdx >= 0 && targetIdx >= 0 && speakerIdx !== targetIdx) {
     var arcD = BR.arcPathFor(speakerIdx, targetIdx, total, 100, 100) || "";
-    html += '<svg class="round-arrows" data-from-idx="' + speakerIdx + '" data-to-idx="' + targetIdx + '" data-total="' + total + '" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><defs><marker id="rt-head" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#e8a33d" /></marker></defs><path class="round-arrow-line" d="' + arcD + '" fill="none" stroke="#e8a33d" stroke-width="1.5" vector-effect="non-scaling-stroke" marker-end="url(#rt-head)" /></svg>';
+    html += '<svg class="round-arrows" data-from-idx="' + speakerIdx + '" data-to-idx="' + targetIdx + '" data-total="' + total + '" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><defs><marker id="rt-head" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto"><path d="M0,0 L14,7 L0,14 Z" fill="#e8a33d" /></marker></defs><path class="round-arrow-line" d="' + arcD + '" fill="none" stroke="#e8a33d" stroke-width="3" vector-effect="non-scaling-stroke" marker-end="url(#rt-head)" /></svg>';
   }
   state.advisors.forEach(function (a, idx) {
     var found = BR.latestCardFor(state, a.id);

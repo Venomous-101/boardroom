@@ -134,10 +134,11 @@ BR.callLLM = function (providerId, model, systemPrompt, userPrompt) {
   var provider = BR.providerById(providerId);
   var controller = null;
   var signal = null;
+  var timeoutId = null;
   if (typeof AbortController !== "undefined") {
     controller = new AbortController();
     signal = controller.signal;
-    setTimeout(function () { try { controller.abort(); } catch (e) { /* ignore */ } }, BR.CALL_TIMEOUT_MS);
+    timeoutId = setTimeout(function () { try { controller.abort(); } catch (e) { /* ignore */ } }, BR.CALL_TIMEOUT_MS);
   }
   return fetch("/api/chat", {
     method: "POST",
@@ -145,7 +146,15 @@ BR.callLLM = function (providerId, model, systemPrompt, userPrompt) {
     body: JSON.stringify({ provider: provider.id, model: model, system: systemPrompt, user: userPrompt }),
     signal: signal
   }).then(function (res) {
+    if (timeoutId !== null) { try { clearTimeout(timeoutId); } catch (e) { /* ignore */ } }
+    /* A non-JSON error page from the host used to surface as a
+       misleading network error, because the JSON parse failure fell
+       into the network catch below. It is now reported plainly as
+       an unusable server response, via the parse rejection handler. */
     return res.json().then(function (data) {
+      if (!data) {
+        return { ok: false, error: { code: "bad_response", message: "The server function returned an unusable response. Retry this step." } };
+      }
       if (!res.ok) {
         if (data && data.error && data.error.code) {
           return { ok: false, error: BR.mapProxyError(provider.id, data.error.code) };
@@ -188,8 +197,11 @@ BR.callLLM = function (providerId, model, systemPrompt, userPrompt) {
         return { ok: false, error: mapped };
       }
       return { ok: false, error: { code: "proxy_error", message: "The server function returned an unusable response. Retry this step." } };
+    }, function () {
+      return { ok: false, error: { code: "bad_response", message: "The server function returned an unusable response. Retry this step." } };
     });
   }).catch(function (err) {
+    if (timeoutId !== null) { try { clearTimeout(timeoutId); } catch (e) { /* ignore */ } }
     if (err && err.name === "AbortError") {
       return { ok: false, error: { code: "timeout", message: "Request timed out. Check your connection and retry this step." } };
     }

@@ -137,7 +137,7 @@ document.addEventListener("DOMContentLoaded", function () {
       var path = svg.querySelector(".round-arrow-line");
       if (path) {
         path.setAttribute("d", d);
-        path.setAttribute("stroke-width", "2");
+        path.setAttribute("stroke-width", "3");
       }
     } catch (e) { /* arc placement is cosmetic; a failure never blocks the debate */ }
   }
