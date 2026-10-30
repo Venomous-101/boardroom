@@ -1,4 +1,13 @@
-/* Boardroom styles. Dark boardroom theme, solid colors only, no gradients. */
+/* Boardroom styles. Dark boardroom theme, solid colors only, no gradients.
+   Typography system: one heading stack (classic serif) and one body
+   stack (system sans) set here and used everywhere. No external fonts
+   are loaded. Headings stay in sentence case. Sizes: H1 34, H2 24,
+   H3 18, body 16 with 1.6 line height, small 14, caption 12. */
+
+:root {
+  --font-head: Georgia, "Times New Roman", serif;
+  --font-body: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
 
 * { box-sizing: border-box; }
 
@@ -6,14 +15,13 @@ body {
   margin: 0;
   background: #0f1419;
   color: #e8ecf1;
-  font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  line-height: 1.55;
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.6;
 }
 
-/* Headings in a classic serif, body in the system sans. No external
-   fonts are loaded, and headings stay in sentence case. */
 h1, h2, h3 {
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-head);
   letter-spacing: -0.2px;
 }
 
@@ -42,8 +50,8 @@ main { max-width: 1080px; margin: 0 auto; padding: 12px 20px 40px; }
   margin: 20px 0;
 }
 
-h2 { font-size: 22px; margin: 0 0 14px; }
-h3 { font-size: 16px; margin: 22px 0 8px; }
+h2 { font-size: 24px; margin: 0 0 14px; }
+h3 { font-size: 18px; margin: 22px 0 8px; }
 
 label { display: block; font-size: 14px; font-weight: 600; margin: 12px 0; }
 input[type="text"], textarea, select {
@@ -167,21 +175,21 @@ button:disabled { opacity: 0.55; cursor: default; }
 }
 /* Addressed seat brightens and turns, never grows: border and
    filter only, so it cannot push into the strip or disclaimer. */
-.stage-seat.addressed, .stage-seat.playing-addressed { border-color: #e8a33d; background: #1a222c; filter: brightness(1.18); }
-.stage-seat.dim, .stage-seat.playing-dim { opacity: 0.45; }
-/* Speaking seat: a visible lift, 8 to 16px, on transform only, plus
+.stage-seat.addressed, .stage-seat.playing-addressed { border-color: #e8a33d; background: #1a222c; filter: brightness(1.25); }
+.stage-seat.dim, .stage-seat.playing-dim { opacity: 0.40; }
+/* Speaking seat: a visible lift, 12 to 22px, on transform only, plus
    its seat-color ring. .playing mirrors .speaking for click-to-
    replay, where no fresh render runs. */
 .stage-seat.speaking, .stage-seat.playing {
   border-color: var(--seat-color, #e8a33d);
-  outline: 2px solid var(--seat-color, #e8a33d);
+  outline: 3px solid var(--seat-color, #e8a33d);
   background: #1a222c;
-  box-shadow: 0 0 0 2px var(--seat-color, #e8a33d), 0 0 24px var(--seat-color, #e8a33d);
+  box-shadow: 0 0 0 2px var(--seat-color, #e8a33d), 0 0 32px var(--seat-color, #e8a33d);
   animation: speaklift 1.6s ease-in-out infinite;
 }
 @keyframes speaklift {
-  0%, 100% { transform: translateY(-8px); }
-  50% { transform: translateY(-16px); }
+  0%, 100% { transform: translateY(-12px); }
+  50% { transform: translateY(-22px); }
 }
 .stage-seat:hover { transform: translateY(-4px); }
 .stage-seat:hover .seat-card, .stage-seat:focus-within .seat-card { display: block; }
@@ -224,10 +232,10 @@ button:disabled { opacity: 0.55; cursor: default; }
 .rebuttal-strip { display: flex; gap: 10px; align-items: center; margin: 4px 0 16px; color: #c6d0da; font-size: 14px; }
 /* Animated dashed interaction arc, speaker to target. Dash motion
    only; the path itself is placed by the page in stage pixels. */
-.round-arrow-line { stroke-dasharray: 6 5; animation: dashmove 1s linear infinite; }
+.round-arrow-line { stroke-dasharray: 10 6; animation: dashmove 0.8s linear infinite; }
 @keyframes dashmove {
   from { stroke-dashoffset: 0; }
-  to { stroke-dashoffset: -11; }
+  to { stroke-dashoffset: -16; }
 }
 
 /* Click-to-focus highlight: outline plus a tint, so the focused
@@ -289,47 +297,52 @@ button:disabled { opacity: 0.55; cursor: default; }
    the bottom of the thumb. It moves with the spoken word, not
    lip-sync. Hidden unless a mouth state class is present. Size
    changes use transform only, never height, so the bar never
-   reflows the portrait. At 96px a 14px open mouth is visible at
-   normal viewing distance, which the old 1 to 3px motions were not. */
+   reflows the portrait. At 96px a 21px open mouth is unmistakable
+   at normal viewing distance, which the old 1 to 3px motions were not. */
 .thumb .mouth {
   display: none;
   position: absolute; left: var(--mouth-x, 50%); top: var(--mouth-y, 48%);
   transform: translate(-50%, -50%) scaleY(0.15);
   transform-origin: center;
-  width: 18%; height: 15%; background: #7c2a2a;
+  width: 26%; height: 22%; background: #7c2a2a;
   border-radius: 7px; z-index: 2;
-  transition: transform 120ms ease;
+  transition: transform 100ms ease;
 }
 .thumb.mouth-closed .mouth { display: block; transform: translate(-50%, -50%) scaleY(0.15); }
-.thumb.mouth-mid .mouth { display: block; transform: translate(-50%, -50%) scaleY(0.55); }
+.thumb.mouth-mid .mouth { display: block; transform: translate(-50%, -50%) scaleY(0.6); }
 .thumb.mouth-open .mouth { display: block; transform: translate(-50%, -50%) scaleY(1); }
 
 /* Speaking head tilt, on the thumb itself so it composes with the
    seat lift and the wrapper look, instead of fighting either. */
 .thumb.talking { animation: headtilt 1.4s ease-in-out infinite; }
 @keyframes headtilt {
-  0%, 100% { transform: rotate(-5deg); }
-  50% { transform: rotate(5deg); }
+  0%, 100% { transform: rotate(-8deg); }
+  50% { transform: rotate(8deg); }
 }
 
 /* Thinking bubble above the thinker's head, with animated dots. */
 .think-bubble {
   position: absolute; bottom: calc(100% + 4px); left: 50%;
   transform: translateX(-50%);
-  display: inline-flex; gap: 4px; align-items: center;
+  display: inline-flex; gap: 6px; align-items: center;
   background: #1a222c; border: 1px solid #e8a33d;
-  border-radius: 999px; padding: 4px 8px; z-index: 4;
+  border-radius: 999px; padding: 6px 12px; z-index: 4;
 }
-.think-bubble span { width: 7px; height: 7px; border-radius: 50%; background: #e8a33d; animation: blink 1.2s infinite; }
+.think-bubble span { width: 10px; height: 10px; border-radius: 50%; background: #e8a33d; animation: blink 1.2s infinite; }
 .think-bubble span:nth-child(2) { animation-delay: 0.2s; }
 .think-bubble span:nth-child(3) { animation-delay: 0.4s; }
 
-/* Ponder tilt for the thinking seat: slow, visible, 6 degrees
+/* Thinking seat ring: amber, static, so the thinker reads even
+   before its bubble is noticed. No animation here, so it needs no
+   reduced-motion shutdown. */
+.stage-seat.state-thinking { border-color: #e8a33d; box-shadow: 0 0 0 1px #e8a33d, 0 0 18px rgba(232, 163, 61, 0.35); }
+
+/* Ponder tilt for the thinking seat: slow, visible, 9 degrees
    either way, on the wrapper so it never fights the thumb. */
 .stage-seat.state-thinking .thumb-wrap { animation: ponder 1.6s ease-in-out infinite; }
 @keyframes ponder {
-  0%, 100% { transform: rotate(-6deg) translateY(0); }
-  50% { transform: rotate(6deg) translateY(2px); }
+  0%, 100% { transform: rotate(-9deg) translateY(0); }
+  50% { transform: rotate(9deg) translateY(4px); }
 }
 
 /* Fixed-height state label on the nameplate, so Thinking and
@@ -341,21 +354,21 @@ button:disabled { opacity: 0.55; cursor: default; }
    is a visible turn toward the speaker or the target. A nod is a
    down tilt, a shake is a side-to-side turn, each driven only by
    the addressed seat's vote or card data. */
-.stage-seat.look-left .thumb-wrap { transform: translateX(-8px) rotate(-7deg); }
-.stage-seat.look-right .thumb-wrap { transform: translateX(8px) rotate(7deg); }
+.stage-seat.look-left .thumb-wrap { transform: translateX(-14px) rotate(-11deg); }
+.stage-seat.look-right .thumb-wrap { transform: translateX(14px) rotate(11deg); }
 .thumb-wrap.react-nod { animation: nod 1.4s ease-in-out; }
 .thumb-wrap.react-shake { animation: shake 1.4s ease-in-out; }
 @keyframes nod {
   0%, 100% { transform: translateY(0) rotate(0deg); }
-  25% { transform: translateY(4px) rotate(6deg); }
+  25% { transform: translateY(8px) rotate(10deg); }
   50% { transform: translateY(0) rotate(0deg); }
-  75% { transform: translateY(4px) rotate(6deg); }
+  75% { transform: translateY(8px) rotate(10deg); }
 }
 @keyframes shake {
   0%, 100% { transform: translateX(0) rotate(0deg); }
-  25% { transform: translateX(-6px) rotate(-6deg); }
-  50% { transform: translateX(6px) rotate(6deg); }
-  75% { transform: translateX(-6px) rotate(-6deg); }
+  25% { transform: translateX(-10px) rotate(-10deg); }
+  50% { transform: translateX(10px) rotate(10deg); }
+  75% { transform: translateX(-10px) rotate(-10deg); }
 }
 
 /* Lean toward the seat being answered. Uses the CSS translate
@@ -393,14 +406,14 @@ button:disabled { opacity: 0.55; cursor: default; }
 }
 
 /* Thinking dots, used on the speaking seat and in the transcript. */
-.thinking { display: inline-flex; gap: 4px; align-items: center; margin-top: 6px; }
-.thinking span { width: 6px; height: 6px; border-radius: 50%; background: #e8a33d; animation: blink 1.2s infinite; }
+.thinking { display: inline-flex; gap: 6px; align-items: center; margin-top: 6px; }
+.thinking span { width: 8px; height: 8px; border-radius: 50%; background: #e8a33d; animation: blink 1.2s infinite; }
 .thinking span:nth-child(2) { animation-delay: 0.2s; }
 .thinking span:nth-child(3) { animation-delay: 0.4s; }
 @keyframes blink { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
 
 /* Fault lines panel. */
-.crux-brief { font-size: 15px; }
+.crux-brief { font-size: 16px; }
 .crux-list { margin: 10px 0; padding-left: 20px; }
 .crux-list li { margin: 8px 0; }
 .crux-sides { display: block; color: #9aa7b4; font-size: 13px; margin-top: 2px; }
@@ -418,7 +431,7 @@ button:disabled { opacity: 0.55; cursor: default; }
 .tx-head { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; margin-bottom: 4px; }
 .tx-speaker { font-weight: 800; }
 .tx-kind { color: #9aa7b4; font-size: 13px; }
-.tx-body { font-size: 15px; max-width: 72ch; overflow-wrap: anywhere; }
+.tx-body { font-size: 16px; max-width: 72ch; overflow-wrap: anywhere; }
 .tx-advisor { display: flex; gap: 12px; align-items: flex-start; }
 .tx-content { min-width: 0; flex: 1; }
 .tx-director { background: #1a222c; border-left: 4px solid #e8a33d; }
@@ -446,9 +459,9 @@ button:disabled { opacity: 0.55; cursor: default; }
 .kp-reason { font-size: 14px; margin-top: 4px; overflow-wrap: anywhere; }
 
 /* Chair weights table in the brief panel. */
-.weights-table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
-.weights-table th, .weights-table td { border: 1px solid #2a3441; padding: 8px 10px; text-align: left; overflow-wrap: anywhere; }
-.weights-table th { background: #1a222c; }
+.weights-table, .score-table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+.weights-table th, .weights-table td, .score-table th, .score-table td { border: 1px solid #2a3441; padding: 8px 10px; text-align: left; overflow-wrap: anywhere; }
+.weights-table th, .score-table th { background: #1a222c; }
 
 /* Draft resolution panel. */
 .draft-rec { font-size: 18px; font-weight: 700; }
@@ -464,8 +477,8 @@ details summary { cursor: pointer; font-weight: 700; margin: 16px 0 8px; }
 
 /* Consult answer. */
 .consult-head { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; }
-.consult-question { color: #c6d0da; font-size: 15px; }
-.consult-answer p { margin: 10px 0; font-size: 15px; }
+.consult-question { color: #c6d0da; font-size: 16px; }
+.consult-answer p { margin: 10px 0; font-size: 16px; }
 
 .vote-badge {
   font-size: 12px; font-weight: 800; letter-spacing: 0.5px;
@@ -478,9 +491,7 @@ details summary { cursor: pointer; font-weight: 700; margin: 16px 0 8px; }
 .vote-badge.no-strong { background: #7f2a22; }
 .vote-badge.waiting { background: #5a6b7a; }
 
-.score-table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
-.score-table th, .score-table td { border: 1px solid #2a3441; padding: 8px 10px; text-align: left; overflow-wrap: anywhere; }
-.score-table th { background: #1a222c; }
+
 .math-lines { color: #c6d0da; font-size: 14px; margin: 8px 0 20px; }
 
 .verdict-label {
@@ -527,7 +538,7 @@ footer {
    never squeezed off the edge or overlapped. The centre table becomes
    a full-width banner at the top of the grid. */
 @media (max-width: 700px) {
-  .stage-round { min-height: 0; display: grid; grid-template-columns: repeat(2, 1fr); gap: 32px 12px; margin-bottom: 12px; }
+  .stage-round { min-height: 0; display: grid; grid-template-columns: repeat(2, 1fr); gap: 48px 12px; margin-bottom: 12px; }
   .round-table { position: static; transform: none; grid-column: 1 / -1; width: 100%; aspect-ratio: auto; border-radius: 12px; }
   .round-arrows { display: none; }
   .round-seat { position: static; transform: none; width: auto; }
