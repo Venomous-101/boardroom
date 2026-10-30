@@ -59,6 +59,10 @@ function rateLimited(ip) {
   });
   var entry = buckets.get(ip);
   if (!entry) {
+    /* Bound the map: cleanup above only removes expired entries, so
+       refuse to grow past 5000 live entries and fail open instead of
+       growing without bound on a long-lived instance. */
+    if (buckets.size >= 5000) { return false; }
     buckets.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
     return false;
   }
@@ -391,3 +395,6 @@ module.exports = async function handler(req, res) {
    deadline, so Groq behavior without an OpenRouter key is unchanged. */
 module.exports.config = { maxDuration: 60 };
 module.exports.OPENROUTER_FREE_CHAIN = OPENROUTER_FREE_CHAIN;
+/* Test hook only: the deployed handler never calls this. It lets the
+   harness prove the bucket cap without firing 5000 real requests. */
+module.exports._rateLimitedForTest = rateLimited;
