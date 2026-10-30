@@ -1149,7 +1149,7 @@ async function main() {
     (function () {
       const css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
       const speak = css.slice(css.indexOf(".stage-seat.speaking"), css.indexOf(".stage-seat.speaking") + 600);
-      return css.indexOf("margin: 12px 0 120px") !== -1 && speak.indexOf("translateY(-16px)") !== -1 &&
+      return css.indexOf("margin: 12px 0 120px") !== -1 && speak.indexOf("translateY(-22px)") !== -1 &&
         speak.indexOf("width:") === -1 && speak.indexOf("height:") === -1 && speak.indexOf("font-size:") === -1;
     })());
   assert("character CSS has no duplicate animation rules for the new states",
@@ -1210,6 +1210,88 @@ async function main() {
       BR.renderTranscript(c, s, null, "The Director");
       return c.innerHTML.indexOf("The Director") !== -1 && c.innerHTML.indexOf("is thinking") !== -1;
     })());
+
+  /* ---------- Overnight rebuild: readable motion, type system, backend hardening ---------- */
+  assert("readable motion amplitudes beat the old small motions",
+    (function () {
+      const css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
+      const has = function (s) { return css.indexOf(s) !== -1; };
+      return has("translateY(-22px)") && has("rotate(8deg)") && has("rotate(9deg)") &&
+        has("translateX(14px)") && has("rotate(11deg)") &&
+        has("translateY(8px)") && has("translateX(10px)") && has("rotate(10deg)") &&
+        has("width: 26%") && has("height: 22%") &&
+        has("width: 10px") && has("stroke-dasharray: 10 6") &&
+        has(".stage-seat.state-thinking {") && has("gap: 48px 12px");
+    })());
+  assert("thinking seat carries a visible amber ring in CSS",
+    (function () {
+      const css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
+      const start = css.indexOf(".stage-seat.state-thinking {");
+      const block = css.slice(start, start + 200);
+      return start !== -1 && block.indexOf("border-color: #e8a33d") !== -1 && block.indexOf("box-shadow") !== -1;
+    })());
+  assert("arc stroke is 3px in the rendered SVG and in the pixel repositioning",
+    (function () {
+      const s = makeDebate(1);
+      s.director = { weights: {}, cruxes: [], brief: "B.", assumptions: [] };
+      BR.PERSONAS.forEach(function (p) { s.director.weights[p.id] = { weight: 1, reason: "R." }; });
+      s.final = {};
+      const c = { innerHTML: "" };
+      BR.renderStage(c, s, "operator", { from: BR.PERSONAS[0], to: BR.PERSONAS[1], kind: "discussion" },
+        BR.charStatesFor(BR.PERSONAS, null, "operator"));
+      const mainCode = fs.readFileSync(path.join(root, "js/main.js"), "utf8");
+      return c.innerHTML.indexOf('stroke-width="3"') !== -1 &&
+        mainCode.indexOf('setAttribute("stroke-width", "3")') !== -1;
+    })());
+  assert("lean toward the target is 20px, not the old 14px",
+    (function () {
+      const v = BR.leanVectorFor(0, 1, 8);
+      const len = Math.sqrt(v.dx * v.dx + v.dy * v.dy);
+      return !!v && len >= 19 && len <= 21;
+    })());
+  assert("typography system is one heading stack, one body stack, 16px body",
+    (function () {
+      const css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
+      return css.indexOf("--font-head") !== -1 && css.indexOf("--font-body") !== -1 &&
+        css.indexOf("line-height: 1.6") !== -1 && css.indexOf("h2 { font-size: 24px") !== -1 &&
+        css.indexOf(".tx-body { font-size: 16px") !== -1;
+    })());
+  assert("server rate bucket fails open at the 5000 entry cap",
+    (function () {
+      const loaded = loadServer({ GROQ_API_KEY: FAKE_GROQ_KEY }, scriptFor([]));
+      const fn = loaded.handler._rateLimitedForTest;
+      if (typeof fn !== "function") { return false; }
+      for (let i = 0; i < 5000; i += 1) { fn("10.9." + (i >> 8) + "." + (i & 255)); }
+      let limited = false;
+      for (let i = 0; i < 121; i += 1) { limited = fn("10.9.0.0"); }
+      const capped = fn("10.8.0.1");
+      return limited === true && capped === false;
+    })());
+  await (async function () {
+    const prevFetch = sandbox.fetch;
+    const prevAbort = sandbox.AbortController;
+    const prevSetTimeout = sandbox.setTimeout;
+    const prevClearTimeout = sandbox.clearTimeout;
+    sandbox.AbortController = AbortController;
+    sandbox.setTimeout = setTimeout;
+    sandbox.clearTimeout = clearTimeout;
+    sandbox.fetch = async function () {
+      return { ok: true, status: 200, json: async function () { throw new Error("bad json"); } };
+    };
+    const bad = await BR.callLLM("groq", "openai/gpt-oss-120b", "sys", "usr");
+    sandbox.fetch = async function () {
+      return { ok: true, status: 200, json: async function () { return { ok: true, text: "hello", servedBy: { provider: "groq", model: "openai/gpt-oss-120b" } }; } };
+    };
+    const good = await BR.callLLM("groq", "openai/gpt-oss-120b", "sys", "usr");
+    sandbox.fetch = prevFetch;
+    sandbox.AbortController = prevAbort;
+    sandbox.setTimeout = prevSetTimeout;
+    sandbox.clearTimeout = prevClearTimeout;
+    assert("client: non-JSON server reply is a plain bad response, not a network error",
+      bad.ok === false && bad.error && bad.error.code === "bad_response", JSON.stringify(bad));
+    assert("client: JSON server reply still parses after the parse-guard change",
+      good.ok === true && good.text === "hello" && good.servedBy.provider === "groq", JSON.stringify(good));
+  })();
 
   /* ---------- Server function: OpenRouter fallback ---------- */
   await serverTests();
