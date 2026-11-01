@@ -129,10 +129,21 @@ button:disabled { opacity: 0.55; cursor: default; }
    seat and shows its card. Click a seat to focus its transcript
    entries and key points. The centre table carries the decision
    title and the current speaker, never a vote. */
-.stage { display: flex; flex-wrap: wrap; gap: 16px; margin: 12px 0 8px; }
+/* Round table geometry. Seats are 144px wide and up to 237px tall
+   (two-line role). With 8 seats the tightest vertical gap is 26.2
+   percent of the stage height, needing at least 905px. With a custom
+   advisor the table holds 9 seats, and the tightest vertical gap
+   shrinks to 21.92 percent, needing at least 1081px (237 / 0.2192).
+   The speaking lift adds 22px, so the gap must clear 259px, needing
+   at least 1182px (259 / 0.2192). 1200px covers both totals with
+   margin, keeps the top seat inside the stage even mid-lift, and
+   keeps the bottom seat inside the 120px margin below the stage.
+   The test harness re-derives this from the live CSS value, so
+   changing the height without re-checking the geometry fails the
+   suite. */
 .stage-round {
   position: relative;
-  min-height: 560px;
+  min-height: 1200px;
   margin: 12px 0 120px;
 }
 .round-seat {
@@ -194,6 +205,12 @@ button:disabled { opacity: 0.55; cursor: default; }
 .stage-seat:hover { transform: translateY(-4px); }
 .stage-seat:hover .seat-card, .stage-seat:focus-within .seat-card { display: block; }
 .stage-seat.card-below .seat-card { bottom: auto; top: 100%; }
+/* Edge seats: a centred 190px card on the leftmost or rightmost seat
+   would run past the viewport, so the card anchors to the seat's
+   inner edge instead. The renderer adds card-left or card-right from
+   the seat's table position. */
+.stage-seat.card-left .seat-card { left: 0; transform: none; }
+.stage-seat.card-right .seat-card { left: auto; right: 0; transform: none; }
 .stage-name { font-weight: 800; margin-top: 8px; overflow-wrap: anywhere; }
 .stage-role { color: #9aa7b4; font-size: 12px; min-height: 30px; overflow-wrap: anywhere; }
 .stage-status { margin-top: 6px; font-size: 12px; min-height: 22px; overflow-wrap: anywhere; }
@@ -224,7 +241,7 @@ button:disabled { opacity: 0.55; cursor: default; }
   padding: 3px 8px; border-radius: 4px; border: 2px solid #fff; color: #fff;
 }
 .vote-stamp.endorse { background: #2e7d32; }
-.vote-stamp.amend { background: #b7791f; }
+.vote-stamp.amend { background: #8a5e14; }
 .vote-stamp.dissent { background: #b03a2e; }
 
 /* Rebuttal strip under the stage: words only, the arc itself lives
@@ -486,7 +503,7 @@ details summary { cursor: pointer; font-weight: 700; margin: 16px 0 8px; }
 }
 .vote-badge.yes-strong { background: #2e7d32; }
 .vote-badge.yes { background: #4a7c59; }
-.vote-badge.yes-if { background: #b7791f; }
+.vote-badge.yes-if { background: #8a5e14; }
 .vote-badge.no { background: #b03a2e; }
 .vote-badge.no-strong { background: #7f2a22; }
 .vote-badge.waiting { background: #5a6b7a; }
@@ -518,7 +535,10 @@ footer {
 }
 
 @media (max-width: 900px) {
-  .round-table { width: min(54%, 420px); }
+  /* 48 percent, not 54: at 661px content width a 54 percent table
+     reaches 509px, past the left edge of the 9-seat lower side seats
+     (499px), overlapping the table. 48 percent clears them. */
+  .round-table { width: min(48%, 420px); }
 }
 
 @media (max-width: 850px) {
@@ -543,6 +563,12 @@ footer {
   .round-arrows { display: none; }
   .round-seat { position: static; transform: none; width: auto; }
   .stage-seat { width: 100%; }
+  /* In the grid the hover card becomes a static block under the seat,
+     so it can never run past the viewport edge on a narrow phone. */
+  .stage-seat .seat-card, .stage-seat.card-below .seat-card {
+    position: static; left: auto; right: auto; top: auto; bottom: auto;
+    transform: none; width: 100%; margin-top: 8px;
+  }
 }
 
 @media print {
