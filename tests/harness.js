@@ -846,7 +846,8 @@ async function main() {
   assert("round table geometry: no seat overlaps another seat or the centre table, at 8 or 9 seats, at any round-layout width",
     (function () {
       /* Full seat rectangles, not centres: seats are 144px wide and
-         up to 237px tall (two-line role). The stage height is read
+         up to 261px tall (120px full-body figure plus name, state,
+         two-line role, and status). The stage height is read
          from the live CSS, so a height regression fails here instead
          of silently reintroducing overlap. Widths are stage content
          widths: 661px is the narrowest round layout (701px viewport
@@ -867,7 +868,7 @@ async function main() {
       if (!m) { return false; }
       var stageH = parseInt(m[1], 10);
       if (css.indexOf("margin: 12px 0 120px") === -1) { return false; }
-      var seatW = 144, seatH = 237;
+      var seatW = 144, seatH = 261;
       function overlaps(a, b) {
         return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
       }
@@ -1098,11 +1099,11 @@ async function main() {
         c.innerHTML.indexOf("look-left") !== -1 && c.innerHTML.indexOf("char-eyes") !== -1 &&
         c.innerHTML.indexOf('data-from-idx="0"') !== -1;
     })());
-  assert("character CSS has blinking eyes, head look, reaction, and scrolling table rules, and no transition all",
+  assert("character CSS has blinking eyes, head look, reaction, and sharp view rules, and no transition all",
     (function () {
       const css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
       return css.indexOf(".char-eyes") !== -1 && css.indexOf(".stage-seat.look-left .char-head") !== -1 &&
-        css.indexOf(".thumb-wrap.react-nod") !== -1 && css.indexOf(".table-scroll") !== -1 &&
+        css.indexOf(".thumb-wrap.react-nod") !== -1 && css.indexOf(".tx-expand") !== -1 &&
         css.indexOf("transition: all") === -1;
     })());
   assert("page has counters, form errors, collapsed explanation, and a div stepper holder",
@@ -1327,7 +1328,7 @@ async function main() {
         BR.charStateFor({ offer: "not-a-state" }, "offer") === "idle" &&
         BR.PERSONAS.every(function (p) { return idle[p.id] === "idle"; });
     })());
-  assert("character figures exist for all 8 seats, each distinct, with head, eyes, mouth, and arm on the face",
+  assert("character figures exist for all 8 seats, each distinct, as full bodies with legs, torso, two arms, head, eyes, and mouth",
     (function () {
       const known = ["operator", "offer", "investor", "marketer", "philosopher", "founder", "saas", "eos"];
       const seen = {};
@@ -1336,12 +1337,25 @@ async function main() {
         if (seen[fig]) { return false; }
         seen[fig] = true;
         return fig.indexOf("char-figure large") !== -1 && fig.indexOf("char-svg") !== -1 &&
+          fig.indexOf('viewBox="0 0 120 200"') !== -1 &&
+          fig.indexOf("char-legs") !== -1 && fig.indexOf("char-torso") !== -1 &&
+          fig.indexOf("char-arm") !== -1 && fig.indexOf("char-arm-g") !== -1 &&
           fig.indexOf("char-head") !== -1 && fig.indexOf("char-eyes") !== -1 &&
-          fig.indexOf("char-mouth") !== -1 && fig.indexOf("char-arm") !== -1 &&
-          fig.indexOf("--blink-delay:") !== -1;
+          fig.indexOf("char-mouth") !== -1 && fig.indexOf("--blink-delay:") !== -1;
       });
       const custom = BR.characterFigure({ id: "custom", color: "#111111", initials: "C" }, "large");
       return ok && custom.indexOf("char-initials") !== -1 && custom.indexOf("char-mouth") === -1;
+    })());
+  assert("stage seats render full-body figures with a gesture arm",
+    (function () {
+      const s = makeDebate(1);
+      s.director = { weights: {}, cruxes: [], brief: "B.", assumptions: [] };
+      BR.PERSONAS.forEach(function (p) { s.director.weights[p.id] = { weight: 1, reason: "R." }; });
+      s.final = {};
+      const c = { innerHTML: "" };
+      BR.renderStage(c, s, null, null, BR.charStatesFor(BR.PERSONAS, null, null));
+      return c.innerHTML.indexOf('viewBox="0 0 120 200"') !== -1 &&
+        c.innerHTML.indexOf("char-arm-g") !== -1 && c.innerHTML.indexOf("char-torso") !== -1;
     })());
   assert("character mouth driver maps word states to figure classes and resets cleanly",
     (function () {
@@ -1569,18 +1583,44 @@ async function main() {
         c.innerHTML.indexOf(longLine) !== -1 && c.innerHTML.indexOf("Weight 2 / 3") !== -1 &&
         c.innerHTML.indexOf("Pillar 7/10") !== -1 && c.innerHTML.indexOf("Endorse (8/10)") !== -1;
     })());
-  assert("table CSS keeps headers whole and breaks cells only at word boundaries",
+  assert("verdict sheet and fault lines carry no tables: seat lines hold vote, weight, and pillar, weights fold into the sheet",
     (function () {
+      const s = makeDebate(1);
+      s.director = { weights: {}, cruxes: [{ question: "Q?", sides: [] }], brief: "B.", assumptions: [] };
+      BR.PERSONAS.forEach(function (p) { s.director.weights[p.id] = { weight: 2, reason: "R." }; });
+      s.final = {};
+      BR.PERSONAS.forEach(function (p) { s.final[p.id] = { vote: "Endorse", finalScore: 8, line: "L." }; });
+      const c1 = { innerHTML: "" };
+      BR.renderCruxes(c1, s);
+      const cruxOk = c1.innerHTML.indexOf("<table") === -1 && c1.innerHTML.indexOf("Chair weights:") !== -1 &&
+        c1.innerHTML.indexOf("Operator 2") !== -1;
+      const v = makeDebate(1);
+      v.director = { weights: {}, cruxes: [], brief: "B.", assumptions: [] };
+      v.final = {};
+      BR.PERSONAS.forEach(function (p) {
+        v.director.weights[p.id] = { weight: 2, reason: "R." };
+        v.final[p.id] = { vote: "Endorse", finalScore: 8, line: "L." };
+      });
+      v.verdict = {
+        label: "GO", recommendedId: "A", recommendedScore: 7,
+        optionScores: { A: { score: 7, math: "A math" }, B: { score: 5, math: "B math" }, C: { score: 3, math: "C math" } },
+        support: 7, confidence: 8, spread: 2, votes: { endorse: 8, amend: 0, dissent: 0 },
+        topReasons: [{ short: "Operator", pillarScore: 8, reason: "Top reason." }],
+        pillarScores: {}, pillarFixes: [], overrides: [], minority: null,
+        amendments: [], dissentList: [], preferredOtherwise: []
+      };
+      BR.PERSONAS.forEach(function (p) { v.verdict.pillarScores[p.id] = 7; });
+      v.draft = null;
+      const c2 = { innerHTML: "" };
+      BR.renderVerdict(c2, v);
+      const verdictOk = c2.innerHTML.indexOf("<table") === -1 &&
+        c2.innerHTML.indexOf("Why it won") !== -1 && c2.innerHTML.indexOf("Every seat, one line") !== -1 &&
+        c2.innerHTML.indexOf("Weight 2") !== -1 && c2.innerHTML.indexOf("Pillar 7/10") !== -1 &&
+        c2.innerHTML.indexOf("option-bars") > c2.innerHTML.indexOf("<details");
       const css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
-      var thStart = css.indexOf(".weights-table th, .score-table th {");
-      var thBlock = css.slice(thStart, css.indexOf("}", thStart));
-      var cellStart = css.indexOf(".weights-table th, .weights-table td");
-      var cellBlock = css.slice(cellStart, css.indexOf("}", cellStart));
-      return thBlock.indexOf("white-space: nowrap") !== -1 &&
-        cellBlock.indexOf("overflow-wrap: break-word") !== -1 &&
-        cellBlock.indexOf("overflow-wrap: anywhere") === -1 &&
-        css.indexOf(".table-scroll { overflow-x: auto; }") !== -1 &&
-        css.indexOf(".table-scroll table { min-width: 520px; }") !== -1;
+      const cssOk = css.indexOf(".weights-table") === -1 && css.indexOf(".score-table") === -1 &&
+        css.indexOf(".table-scroll") === -1 && css.indexOf(".verdict-seat {") !== -1;
+      return cruxOk && verdictOk && cssOk;
     })());
   assert("glass panels use translucent backgrounds with blur and keep AA contrast over the blend",
     (function () {
@@ -1647,6 +1687,144 @@ async function main() {
          instead of overflowing. */
       return css.indexOf(".kp-content { min-width: 0; flex: 1; }") !== -1 &&
         css.indexOf(".kp-item {") !== -1 && css.indexOf(".tx-entry {") !== -1;
+    })());
+
+  /* ---------- Sharp output and prompt caps (round 3) ---------- */
+  assert("sharp view leads with a headline, then at most two supporting sentences, rest behind a control",
+    (function () {
+      const a = BR.splitSharp("First sentence here. Second sentence here. Third sentence here. Fourth sentence here.", "");
+      const b = BR.splitSharp("First sentence here. Second sentence here. Third sentence here.", "Model headline.");
+      const c = BR.splitSharp("Only one line.", "");
+      const d = BR.splitSharp("", "");
+      return a.headline === "First sentence here." && a.excerpt === "Second sentence here. Third sentence here." &&
+        a.rest === "Fourth sentence here." && a.hasMore === true &&
+        b.headline === "Model headline." && b.excerpt.indexOf("First sentence") !== -1 && b.hasMore === true &&
+        c.hasMore === false && c.excerpt === "" && d.headline === "" && d.hasMore === false;
+    })());
+  assert("long transcript entries render sharp by default with full text behind an expand control",
+    (function () {
+      const s = makeDebate(1);
+      s.transcript = [{
+        kind: "argument", speaker: "Operator", title: "Debate round 1",
+        headline: "Price beats volume here.",
+        body: "First sentence here. Second sentence here. Third sentence here. Fourth sentence here.",
+        disagreeWith: "Offer", concede: "", stepKey: "debate:1:operator"
+      }];
+      s.servedBy = { "debate:1:operator": { provider: "groq", model: "gpt-oss-120b" } };
+      const c = { innerHTML: "" };
+      BR.renderTranscript(c, s, null);
+      const fullIdx = c.innerHTML.indexOf('class="tx-full"');
+      return c.innerHTML.indexOf("tx-sharp") !== -1 && c.innerHTML.indexOf("Price beats volume here.") !== -1 &&
+        c.innerHTML.indexOf("tx-expand") !== -1 && c.innerHTML.indexOf("Show full text") !== -1 &&
+        fullIdx !== -1 && c.innerHTML.indexOf("Fourth sentence here.") > fullIdx &&
+        c.innerHTML.indexOf("provider-badge") > fullIdx &&
+        c.innerHTML.indexOf("tx-head") < fullIdx &&
+        c.innerHTML.split("provider-badge").length - 1 === 1;
+    })());
+  assert("short transcript entries render plainly with no expand control and no hidden block",
+    (function () {
+      const s = makeDebate(1);
+      s.transcript = [{ kind: "vote", speaker: "Operator", title: "Opening vote", body: "Yes on option A. Short reason." }];
+      s.servedBy = {};
+      const c = { innerHTML: "" };
+      BR.renderTranscript(c, s, null);
+      return c.innerHTML.indexOf("tx-expand") === -1 && c.innerHTML.indexOf("tx-full") === -1 &&
+        c.innerHTML.indexOf("Short reason.") !== -1;
+    })());
+  assert("discussion extras live inside the full text, never in the sharp view",
+    (function () {
+      const s = makeDebate(1);
+      s.transcript = [{
+        kind: "discussion", speaker: "Operator", title: "Discussion", body: "Reply.",
+        answerTo: "Offer", agree: "disagree", pointAnswered: "P.",
+        steelman: "Offer's point at its strongest, fairly stated.", weakPoint: "W.",
+        concede: "I concede the timing point because the cash data beats my case.",
+        costOfBeingWrong: "C.", evidenceDemanded: "E."
+      }];
+      const c = { innerHTML: "" };
+      BR.renderTranscript(c, s, null);
+      const fullIdx = c.innerHTML.indexOf('class="tx-full"');
+      const sharpEnd = c.innerHTML.indexOf("tx-full");
+      return fullIdx !== -1 && c.innerHTML.indexOf("Steelman:") > fullIdx &&
+        c.innerHTML.indexOf("Show detail") !== -1 &&
+        c.innerHTML.slice(0, sharpEnd).indexOf("Steelman:") === -1;
+    })());
+  assert("prompt caps are explicit: opening 60 words, debate and discussion 80, final line 25, brief 120, headline one line",
+    (function () {
+      const s = makeDebate(1);
+      s.director = { weights: {}, cruxes: [], brief: "B.", assumptions: [] };
+      const adv = BR.PERSONAS[0];
+      const opening = BR.openingUser(s, adv, 2);
+      const debate = BR.debateUser(s, adv, {}, 1);
+      const discussion = BR.discussionUser(s, adv, BR.PERSONAS[1], null);
+      const final = BR.finalUser(s, adv);
+      const director = BR.directorUser(s);
+      return opening.indexOf('"headline"') !== -1 && opening.indexOf("under 60 words") !== -1 &&
+        debate.indexOf('"headline"') !== -1 && debate.indexOf("under 80 words") !== -1 &&
+        discussion.indexOf('"headline"') !== -1 && discussion.indexOf("under 80 words") !== -1 &&
+        final.indexOf("under 25 words") !== -1 && director.indexOf("under 120 words") !== -1 &&
+        BR.ROOM_RULES.indexOf("one-line headline") !== -1 &&
+        BR.ROOM_RULES.indexOf("Never repeat a seat") !== -1;
+    })());
+  assert("validators enforce the caps even when a model ignores them",
+    (function () {
+      const long = new Array(120).join("word ");
+      const ids = ["A", "B", "C"];
+      const debate = BR.validateDebate({ stance: "Yes", optionScores: { A: 8, B: 5, C: 3 }, rebuttal: long, reason: "R." }, ids);
+      const discussion = BR.validateDiscussion({ answerTo: "Offer", agree: "disagree", pointAnswered: "P.", steelman: "A fair steelman of the point here.", weakPoint: "W.", reply: long, concede: "Nothing conceded: the attack fails because the premise holds.", costOfBeingWrong: "C.", evidenceDemanded: "E.", headline: long });
+      const final = BR.validateFinal({ vote: "Endorse", finalScore: 8, line: long });
+      const opening = BR.validateOpening({ stance: "Yes", optionScores: { A: 8, B: 5, C: 3 }, reason: "R.", headline: long }, ids);
+      return debate && debate.rebuttal.length <= 500 &&
+        discussion && discussion.reply.length <= 500 && discussion.headline.length <= 160 &&
+        final && final.line.length <= 160 && opening && opening.headline.length <= 160;
+    })());
+  assert("key points cards stay to stance plus score, with no confidence, ruin, or door clutter",
+    (function () {
+      const kp = makeDebate(1);
+      kp.director = { weights: {}, cruxes: [], brief: "B.", assumptions: [] };
+      kp.debateRounds = [{ round: 1, cards: {} }];
+      BR.PERSONAS.forEach(function (p) {
+        kp.director.weights[p.id] = { weight: 1, reason: "R." };
+        kp.debateRounds[0].cards[p.id] = { stance: "Yes", recommendedId: "A", optionScores: { A: 8, B: 5, C: 3 }, pillarScore: 7, confidence: 4, ruinRisk: "likely", door: "one-way", reason: "R.", changeMind: "N." };
+      });
+      kp.final = {};
+      const c = { innerHTML: "" };
+      BR.renderKeyPoints(c, kp);
+      return c.innerHTML.indexOf("Confidence") === -1 && c.innerHTML.indexOf("Ruin:") === -1 &&
+        c.innerHTML.indexOf("Door:") === -1 && c.innerHTML.indexOf("Option A: 8/10") !== -1;
+    })());
+  assert("verdict sheet order is verdict, reasons, seat lines, then full detail",
+    (function () {
+      const v = makeDebate(1);
+      v.director = { weights: {}, cruxes: [], brief: "B.", assumptions: [] };
+      v.final = {};
+      BR.PERSONAS.forEach(function (p) {
+        v.director.weights[p.id] = { weight: 2, reason: "R." };
+        v.final[p.id] = { vote: "Endorse", finalScore: 8, line: "L." };
+      });
+      v.verdict = {
+        label: "GO", recommendedId: "A", recommendedScore: 7,
+        optionScores: { A: { score: 7, math: "A math" }, B: { score: 5, math: "B math" }, C: { score: 3, math: "C math" } },
+        support: 7, confidence: 8, spread: 2, votes: { endorse: 8, amend: 0, dissent: 0 },
+        topReasons: [{ short: "Operator", pillarScore: 8, reason: "Top reason." }],
+        pillarScores: {}, pillarFixes: [], overrides: [], minority: null,
+        amendments: [], dissentList: [], preferredOtherwise: []
+      };
+      BR.PERSONAS.forEach(function (p) { v.verdict.pillarScores[p.id] = 7; });
+      v.draft = null;
+      const c = { innerHTML: "" };
+      BR.renderVerdict(c, v);
+      const call = c.innerHTML.indexOf("verdict-call");
+      const reasons = c.innerHTML.indexOf("Why it won");
+      const seats = c.innerHTML.indexOf("Every seat, one line");
+      const detail = c.innerHTML.indexOf("<details");
+      return call !== -1 && reasons > call && seats > reasons && detail > seats;
+    })());
+  assert("main.js wires the transcript expand control and unhides full text during playback",
+    (function () {
+      const main = fs.readFileSync(path.join(root, "js/main.js"), "utf8");
+      return main.indexOf('".tx-expand"') !== -1 && main.indexOf('".tx-full"') !== -1 &&
+        main.indexOf("Hide full text") !== -1;
     })());
 
   /* ---------- Server function: OpenRouter fallback ---------- */
