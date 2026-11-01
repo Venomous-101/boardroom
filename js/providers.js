@@ -5,9 +5,10 @@
    No key appears in this file, in the page, in the browser's storage,
    or in any request the browser makes to a third party.
    When Groq is rate-limited or errors, the server function
-   automatically tries free OpenRouter models and reports which
-   provider and model served each call, so a fallback is visible,
-   never silent.
+   automatically walks free OpenRouter models one request at a
+   time, best model first, until one serves the call, and reports
+   which provider and model served each call, so a fallback is
+   visible, never silent.
    No request body is ever logged. */
 
 var BR = (function () {
@@ -15,12 +16,16 @@ var BR = (function () {
   globalThis.BR = globalThis.BR || {}; return globalThis.BR;
 })();
 
-/* Free-only OpenRouter fallback chain. Keep in sync with api/chat.js;
-   the harness asserts the two lists match. Every id ends in :free. */
+/* Free-only OpenRouter fallback chain, best model first. Verified
+   against OpenRouter's live model catalog on 1 Nov 2026: every id
+   below was present with prompt and completion price 0. Keep in
+   sync with api/chat.js; the harness asserts the two lists match.
+   Every id ends in :free. */
 BR.OPENROUTER_FREE_CHAIN = [
+  "thinkingmachines/inkling:free",
+  "nvidia/nemotron-3-ultra-550b-a55b:free",
   "google/gemma-4-31b-it:free",
-  "dots-studio/dots-3-note-preview:free",
-  "nvidia/nemotron-3-ultra-550b-a55b:free"
+  "dots-studio/dots-3-note-preview:free"
 ];
 
 BR.PROVIDERS = {
@@ -32,7 +37,7 @@ BR.PROVIDERS = {
   openrouter: {
     id: "openrouter",
     label: "OpenRouter",
-    defaultModel: "google/gemma-4-31b-it:free"
+    defaultModel: "thinkingmachines/inkling:free"
   },
   gemini: {
     id: "gemini",
@@ -175,6 +180,12 @@ BR.callLLM = function (providerId, model, systemPrompt, userPrompt) {
           return { ok: false, error: { code: "empty_response", message: provider.label + " returned an empty response. Retry this step." } };
         }
         var mapped = BR.mapProviderError(provider.id, data.status, data.body);
+        if (data.walkAttempts) {
+          /* Honest walk report: say how many free models the server
+             walked, so a retry that tried four models reads as four
+             tries, not one failure. */
+          mapped.message += " The server walked " + data.walkAttempts + " free OpenRouter model" + (data.walkAttempts === 1 ? "" : "s") + " for this step" + (data.walkExhausted ? ", and all of them failed" : "") + ".";
+        }
         if (data.fallbackExhausted) {
           /* Honest fallback failure: name the fallback status, give
              the truncated fallback detail, and explain the free
@@ -184,6 +195,9 @@ BR.callLLM = function (providerId, model, systemPrompt, userPrompt) {
           var fallbackNote = " The OpenRouter free fallbacks also failed";
           if (typeof data.fallbackStatus === "number") {
             fallbackNote += " (HTTP " + data.fallbackStatus + ")";
+          }
+          if (typeof data.fallbackAttempts === "number") {
+            fallbackNote += " after trying " + data.fallbackAttempts + " free model" + (data.fallbackAttempts === 1 ? "" : "s");
           }
           fallbackNote += ". OpenRouter free tier allows 20 requests per minute and 50 per day, so if the daily cap is hit, retrying today will not help; wait for the cap to reset or switch provider.";
           if (typeof data.fallbackBody === "string" && data.fallbackBody) {

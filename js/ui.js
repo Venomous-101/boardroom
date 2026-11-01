@@ -1,14 +1,15 @@
 /* Boardroom UI rendering: the conversation room.
    Every dynamic string passes through BR.esc before it reaches innerHTML.
    No user text and no model text is ever inserted unescaped.
-   Portraits come from a fixed allowlist of seat ids, never from user input.
-   Animation is pure CSS/JS, in five states per seat (idle, thinking,
-   speaking, listening, reacting): thinking bubble and ponder tilt
-   during a model wait, visible lift and head tilt with a mouth on
-   the face during speech, idle breathing and blink, hover lift with
-   a seat card, click to focus, spotlight, and an animated dashed
-   interaction arc with a rebuttal strip. Reduced motion is honored
-   in styles.css and by the blink timer in main.js. */
+   Characters come from a fixed look table keyed by seat id, never
+   from user input, and are inline SVG, never photos of real people.
+   Animation is CSS plus GSAP one-shots, in five states per seat
+   (idle, thinking, speaking, listening, reacting): thinking bubble
+   and ponder tilt during a model wait, visible lift and head tilt
+   with a moving mouth on the face during speech, idle breathing and
+   blink, hover lift with a seat card, click to focus, spotlight,
+   and an animated dashed interaction arc with a rebuttal strip.
+   Reduced motion is honored in styles.css. */
 
 var BR = (function () {
   if (typeof window !== "undefined") { window.BR = window.BR || {}; return window.BR; }
@@ -71,41 +72,130 @@ BR.latestCardFor = function (state, advisorId) {
   return null;
 };
 
-/* Portrait files shipped with the app, keyed by seat id. Any other id
-   (including the custom advisor) falls back to initials. */
-BR.avatarPathFor = function (advisorId) {
-  var known = ["operator", "offer", "investor", "marketer", "philosopher", "founder", "saas", "eos"];
-  if (known.indexOf(advisorId) === -1) { return null; }
-  return "assets/avatars/" + advisorId + ".png";
+/* Animated SVG characters, one per seat. Each seat gets a distinct
+   look (skin, hair, accessory) from a fixed table, never from user
+   input, so no seat can be confused with another. The figure is an
+   inline SVG bust: shoulders in the seat color, a head group that
+   turns, eyes that blink, a mouth that moves with speech, and one
+   arm that gestures. Motion is split cleanly: CSS keyframes drive
+   the loops (blink, breathing, thinking tilt, listening turn,
+   speaking head and arm loops), while GSAP, when the CDN loaded,
+   drives one-shot motion (per-word mouth, speaking arm gesture,
+   panel entrance). The two never fight: GSAP owns only the arm
+   gesture and the mouth, CSS owns everything else, and the page
+   adds a gsap-on class to the body when GSAP is present so the
+   CSS speaking loops stand down. Any other id (including the
+   custom advisor) falls back to initials with no face, so it never
+   wears a floating mouth. */
+BR.CHAR_LOOK = {
+  operator: { skin: "#e8c39a", hair: "#2b2118", hairStyle: "short", accessory: "tie" },
+  offer: { skin: "#f2c9a0", hair: "#d9a441", hairStyle: "bold", accessory: "none" },
+  investor: { skin: "#e6b98d", hair: "#9aa7b4", hairStyle: "sides", accessory: "glasses" },
+  marketer: { skin: "#c98d5f", hair: "#1f160e", hairStyle: "curly", accessory: "headset" },
+  philosopher: { skin: "#e8c39a", hair: "#3a2c1c", hairStyle: "bald", accessory: "beard" },
+  founder: { skin: "#f0cfa8", hair: "#333333", hairStyle: "cap", accessory: "none" },
+  saas: { skin: "#d9a06b", hair: "#26221e", hairStyle: "buzz", accessory: "badge" },
+  eos: { skin: "#e8c39a", hair: "#1f160e", hairStyle: "long", accessory: "scarf" }
 };
 
-/* Mouth position on the face itself, per seat, as percent of the
-   square portrait (the thumb is a circle crop of the full square, so
-   percent maps directly). Grounded 30 Oct 2026 by visual grounding on
-   each PNG; see the working note beside the app, not in the app.
-   A seat with no portrait (the custom advisor) gets no mouth overlay
-   and still gets the whole-bust lift, lean, spotlight, and dimming. */
-BR.MOUTH_POS = {
-  operator: { x: 51.4, y: 33.5 }, offer: { x: 50, y: 45.4 },
-  investor: { x: 50, y: 49.6 }, marketer: { x: 48, y: 47.5 },
-  philosopher: { x: 52, y: 48.3 }, founder: { x: 48.5, y: 52 },
-  saas: { x: 50, y: 46.1 }, eos: { x: 50, y: 48 }
+BR.charHairFor = function (look) {
+  var h = look.hair;
+  if (look.hairStyle === "short") { return '<path d="M28 38 Q28 16 48 16 Q68 16 68 38 Q62 24 48 24 Q34 24 28 38 Z" fill="' + h + '"/>'; }
+  if (look.hairStyle === "bold") { return '<path d="M26 40 Q24 12 48 12 Q72 12 70 40 Q64 22 48 22 Q32 22 26 40 Z" fill="' + h + '"/>'; }
+  if (look.hairStyle === "sides") { return '<path d="M28 30 Q26 20 34 18 L34 30 Z" fill="' + h + '"/><path d="M68 30 Q70 20 62 18 L62 30 Z" fill="' + h + '"/>'; }
+  if (look.hairStyle === "curly") { return '<circle cx="34" cy="22" r="7" fill="' + h + '"/><circle cx="48" cy="16" r="8" fill="' + h + '"/><circle cx="62" cy="22" r="7" fill="' + h + '"/>'; }
+  if (look.hairStyle === "cap") { return '<path d="M28 34 Q28 14 48 14 Q68 14 68 34 Z" fill="' + h + '"/><ellipse cx="48" cy="33" rx="22" ry="4" fill="' + h + '"/>'; }
+  if (look.hairStyle === "buzz") { return '<path d="M30 34 Q30 18 48 18 Q66 18 66 34 Q60 24 48 24 Q36 24 30 34 Z" fill="' + h + '"/>'; }
+  if (look.hairStyle === "long") { return '<rect x="26" y="22" width="8" height="28" rx="4" fill="' + h + '"/><rect x="62" y="22" width="8" height="28" rx="4" fill="' + h + '"/>'; }
+  return "";
 };
 
-/* Round thumb: initials underneath, portrait on top. If the portrait
-   fails to load, the onerror hides it and the initials show instead.
-   The mouth overlay and eyelid exist only on a real portrait, so a
-   custom advisor's initials thumb never wears a floating mouth. */
-BR.avatarThumb = function (a, cls) {
-  var path = BR.avatarPathFor(a.id);
-  var pos = BR.MOUTH_POS[a.id] || { x: 50, y: 48 };
-  var inner = '<span class="thumb-initials" style="background:' + BR.esc(a.color) + '">' + BR.esc(a.initials) + '</span>';
-  if (path) {
-    inner += '<img class="thumb-img" src="' + BR.esc(path) + '" alt="" onerror="this.style.display=\'none\';this.parentNode.classList.add(\'portrait-failed\')">';
-    inner += '<span class="mouth" aria-hidden="true"></span>';
-    inner += '<span class="eyelid" aria-hidden="true"></span>';
+BR.charAccessoryFor = function (look, color) {
+  if (look.accessory === "tie") { return '<polygon points="48,68 43,78 48,92 53,78" fill="#14100a"/>'; }
+  if (look.accessory === "glasses") { return '<g fill="none" stroke="#14100a" stroke-width="2"><circle cx="40" cy="38" r="6.5"/><circle cx="56" cy="38" r="6.5"/><line x1="46.5" y1="38" x2="49.5" y2="38"/></g>'; }
+  if (look.accessory === "headset") { return '<g fill="none" stroke="#14100a" stroke-width="2.5" stroke-linecap="round"><path d="M30 36 Q30 14 48 14 Q66 14 66 36"/><line x1="66" y1="36" x2="62" y2="48"/></g>'; }
+  if (look.accessory === "beard") { return '<path d="M32 46 Q48 70 64 46 Q60 56 48 56 Q36 56 32 46 Z" fill="' + look.hair + '"/>'; }
+  if (look.accessory === "badge") { return '<circle cx="66" cy="80" r="5" fill="#e8ecf1"/><circle cx="66" cy="80" r="2" fill="' + color + '"/>'; }
+  if (look.accessory === "scarf") { return '<rect x="30" y="62" width="36" height="8" rx="4" fill="#e8ecf1"/>'; }
+  return "";
+};
+
+/* Deterministic blink delay per seat, so the room does not blink in
+   unison. Derived from the seat id only, no clock or randomness. */
+BR.blinkDelayFor = function (id) {
+  var sum = 0;
+  for (var i = 0; i < id.length; i++) { sum += id.charCodeAt(i); }
+  return ((sum % 46) / 10).toFixed(1);
+};
+
+/* One animated character figure. Large (96px) on the stage, small
+   (40px) in the transcript, key points, and consult panels. The
+   mouth sits on the face at a fixed spot in the SVG, so it can never
+   float off the face the way an overlaid div could. */
+BR.characterFigure = function (a, cls) {
+  var look = BR.CHAR_LOOK[a.id];
+  if (!look) {
+    return '<span class="char-figure ' + (cls || "") + '"><span class="char-initials" style="background:' + BR.esc(a.color) + '">' + BR.esc(a.initials) + '</span></span>';
   }
-  return '<span class="thumb ' + (cls || "") + '" style="--mouth-x:' + pos.x + '%;--mouth-y:' + pos.y + '%">' + inner + '</span>';
+  var color = BR.esc(a.color);
+  var skin = look.skin;
+  var svg = '<svg class="char-svg" viewBox="0 0 96 96" aria-hidden="true">';
+  svg += '<path d="M14 96 Q14 68 48 68 Q82 68 82 96 Z" fill="' + color + '"/>';
+  svg += '<rect x="42" y="52" width="12" height="18" fill="' + skin + '"/>';
+  svg += '<g class="char-arm"><path d="M70 74 Q84 80 80 92" stroke="' + color + '" stroke-width="7" stroke-linecap="round" fill="none"/></g>';
+  svg += '<g class="char-head">';
+  svg += '<circle cx="48" cy="38" r="20" fill="' + skin + '"/>';
+  svg += BR.charHairFor(look);
+  svg += '<g class="char-eyes"><circle cx="40" cy="38" r="2.6" fill="#14100a"/><circle cx="56" cy="38" r="2.6" fill="#14100a"/></g>';
+  svg += '<g stroke="#14100a" stroke-width="1.6" stroke-linecap="round"><line x1="36" y1="31" x2="44" y2="31"/><line x1="52" y1="31" x2="60" y2="31"/></g>';
+  svg += '<ellipse class="char-mouth" cx="48" cy="50" rx="6" ry="2.5" fill="#7c2a2a"/>';
+  svg += BR.charAccessoryFor(look, color);
+  svg += '</g></svg>';
+  return '<span class="char-figure ' + (cls || "") + '" style="--blink-delay:' + BR.blinkDelayFor(a.id) + 's">' + svg + '</span>';
+};
+
+/* Mouth state classes, as literals, for the same audit reason. */
+BR.MOUTH_STATE_CLASS = { "mouth-closed": "char-mouth-closed", "mouth-mid": "char-mouth-mid", "mouth-open": "char-mouth-open" };
+BR.MOUTH_STATE_SCALE = { "mouth-closed": 0.15, "mouth-mid": 0.6, "mouth-open": 1 };
+
+/* Move one figure's mouth to a word state. With GSAP present, a
+   short one-shot tween scales the mouth and the matching CSS class
+   is set too, so class and tween always agree; without GSAP the
+   class alone sets the same scale. Classes are always cleared
+   first, so a GSAP tween and a CSS class never fight over the same
+   mouth. A null state resets the mouth: it kills any in-flight
+   tween and clears the inline transform, so a stopped playback
+   never freezes a mouth open. */
+BR.charMouth = function (figureEl, mouthClass) {
+  if (!figureEl) { return; }
+  var mouth = figureEl.querySelector(".char-mouth");
+  ["char-mouth-closed", "char-mouth-mid", "char-mouth-open"].forEach(function (c) { figureEl.classList.remove(c); });
+  if (typeof window !== "undefined" && window.gsap && mouth) { window.gsap.killTweensOf(mouth); }
+  if (!mouthClass) {
+    if (mouth) { mouth.style.transform = ""; }
+    return;
+  }
+  var target = BR.MOUTH_STATE_CLASS[mouthClass] || "char-mouth-closed";
+  figureEl.classList.add(target);
+  if (typeof window !== "undefined" && window.gsap && mouth) {
+    window.gsap.to(mouth, { scaleY: BR.MOUTH_STATE_SCALE[mouthClass] || 0.15, duration: 0.12, transformOrigin: "50% 50%" });
+  }
+};
+
+/* One-shot speaking arm gesture. GSAP only: a short raise and fall
+   of the arm when a line starts. Without GSAP the CSS speaking loop
+   on the arm carries the gesture instead, so this is never called
+   unless GSAP loaded. */
+BR.charGesture = function (figureEl) {
+  if (!figureEl || typeof window === "undefined" || !window.gsap) { return; }
+  var arm = figureEl.querySelector(".char-arm");
+  if (!arm) { return; }
+  /* svgOrigin, not transformOrigin: the shoulder sits at viewBox
+     point (70, 74), and a px transformOrigin on SVG is ambiguous
+     across GSAP's bbox handling, which could swing the arm around
+     a point far outside the figure. svgOrigin pins the pivot to
+     the shoulder exactly. */
+  window.gsap.fromTo(arm, { rotation: 0, svgOrigin: "70 74" }, { rotation: -32, duration: 0.35, yoyo: true, repeat: 1, ease: "sine.inOut" });
 };
 
 /* Live character states. Exactly one per seat at a time, enforced by
@@ -115,7 +205,7 @@ BR.avatarThumb = function (a, cls) {
    speaking while its line reveals word by word, then listening
    while another seat speaks (addressed is a listening seat that
    was answered or rebutted, a modifier, not a sixth state). A
-   reaction (nod or shake) is a transient animation on the thumb
+   reaction (nod or shake) is a transient animation on the figure
    wrapper during playback, not a second state, so the map never
    holds two states for one seat. "reacting" stays a valid value
    for charStateFor validation, but the page never renders it. */
@@ -416,7 +506,7 @@ BR.renderStage = function (container, state, speakingId, rebuttal, charStates) {
     var weight = state.director && state.director.weights[a.id] ? state.director.weights[a.id] : null;
     html += '<div class="round-seat" style="left:' + pt.x.toFixed(2) + '%;top:' + pt.y.toFixed(2) + '%;">';
     html += '<div class="' + cls + '" data-seat-id="' + BR.esc(a.id) + '" tabindex="0" role="button" aria-label="Focus ' + BR.esc(a.short) + '" style="' + style + '">';
-    html += '<span class="thumb-wrap">' + BR.avatarThumb(a, speaking ? "large talking" : "large idle");
+    html += '<span class="thumb-wrap">' + BR.characterFigure(a, speaking ? "large talking" : "large idle");
     if (seatState === "thinking") {
       html += '<span class="think-bubble" aria-hidden="true"><span></span><span></span><span></span></span>';
     }
@@ -503,7 +593,7 @@ BR.renderTranscript = function (container, state, speakingId, workingLabel) {
         ? BR.displayDiscussionTarget(state, t)
         : (t.answerTo || "");
       html += '<div class="tx-entry tx-advisor" data-speaker="' + BR.esc(speakerId) + '" data-kind="' + BR.esc(t.kind) + '" data-answer-to="' + BR.esc(displayTo) + '" data-disagree-with="' + BR.esc(t.disagreeWith || "") + '">';
-      if (adv) { html += BR.avatarThumb(adv, ""); }
+      if (adv) { html += BR.characterFigure(adv, ""); }
       html += '<div class="tx-content"><div class="tx-head"><span class="tx-speaker">' + BR.esc(t.speaker) + '</span>';
       html += '<span class="tx-kind">' + BR.esc(t.title) + '</span>' + BR.servedBadgeFor(state, t.stepKey) + '</div>';
       html += '<div class="tx-body">' + BR.esc(t.body) + '</div>';
@@ -536,7 +626,7 @@ BR.renderTranscript = function (container, state, speakingId, workingLabel) {
   if (speakingId && !state.completed) {
     var current = BR.advisorById(state, speakingId);
     if (current) {
-      html += '<div class="tx-entry tx-thinking">' + BR.avatarThumb(current, "") + '<span><strong>' + BR.esc(current.short) + '</strong> is thinking<span class="thinking"><span></span><span></span><span></span></span></span></div>';
+      html += '<div class="tx-entry tx-thinking">' + BR.characterFigure(current, "") + '<span><strong>' + BR.esc(current.short) + '</strong> is thinking<span class="thinking"><span></span><span></span><span></span></span></span></div>';
     }
   } else if (workingLabel && !state.completed) {
     /* Director and draft steps have no seat, so their model wait
@@ -547,23 +637,31 @@ BR.renderTranscript = function (container, state, speakingId, workingLabel) {
 };
 
 /* Key points side panel: live one-liners per seat during the debate,
-   the scorecard table after the verdict. Weighted maths live on the
-   verdict sheet, not here. */
+   stacked cards after the verdict. The verdict used to render as a
+   five-column table inside the 340px aside, and on real phones its
+   headers wrapped letter by letter while every Line cell cut off
+   mid-sentence. Cards fix that by construction: each card is full
+   container width, every field is labelled, and the Line prints in
+   full at word boundaries, so no text can ever be cut off at any
+   width. Weighted maths live on the verdict sheet, not here. */
 BR.renderKeyPoints = function (container, state) {
   if (state.verdict) {
     var v = state.verdict;
-    var html = '<div class="table-scroll"><table class="score-table"><thead><tr><th>Seat</th><th>Weight</th><th>Final vote</th><th>Pillar</th><th>Line</th></tr></thead><tbody>';
+    var html = "";
     state.advisors.forEach(function (a) {
       var w = state.director.weights[a.id] ? state.director.weights[a.id].weight : 1;
       var latest = BR.latestCardFor(state, a.id);
       var f = state.final[a.id];
       var finalCell = (f && f.vote && isFinite(Number(f.finalScore))) ? f.vote + " (" + f.finalScore + "/10)" : (latest ? latest.card.stance : "");
-      html += '<tr><td>' + BR.esc(a.short) + '</td><td>' + BR.esc(w) + '</td>';
-      html += '<td>' + BR.esc(finalCell) + '</td>';
-      html += '<td>' + BR.esc(v.pillarScores[a.id]) + '/10</td>';
-      html += '<td>' + BR.esc(f ? f.line : "") + '</td></tr>';
+      var badgeClass = (f && f.vote === "Endorse") ? "yes" : (f && f.vote === "Endorse with amendment") ? "yes-if" : (f && f.vote === "Dissent") ? "no" : BR.voteBadgeClass(latest ? latest.card.stance : "");
+      html += '<div class="kp-item" data-seat-id="' + BR.esc(a.id) + '">' + BR.characterFigure(a, "") + '<div class="kp-content">';
+      html += '<div class="kp-head"><span class="kp-name">' + BR.esc(a.short) + '</span>';
+      html += '<span class="kp-weight">Weight ' + BR.esc(w) + ' / 3</span></div>';
+      html += '<div class="kp-line"><span class="vote-badge ' + badgeClass + '">' + BR.esc(finalCell) + '</span></div>';
+      html += '<div class="kp-meta">Pillar ' + BR.esc(v.pillarScores[a.id]) + '/10</div>';
+      html += '<div class="kp-reason">' + BR.esc(f ? f.line : "") + '</div>';
+      html += '</div></div>';
     });
-    html += '</tbody></table></div>';
     container.innerHTML = html;
     return;
   }
@@ -572,7 +670,7 @@ BR.renderKeyPoints = function (container, state) {
     var found = BR.latestCardFor(state, a.id);
     var card = found ? found.card : null;
     var weight = state.director && state.director.weights[a.id] ? state.director.weights[a.id] : null;
-    items += '<div class="kp-item" data-seat-id="' + BR.esc(a.id) + '">' + BR.avatarThumb(a, "") + '<div class="kp-content">';
+    items += '<div class="kp-item" data-seat-id="' + BR.esc(a.id) + '">' + BR.characterFigure(a, "") + '<div class="kp-content">';
     items += '<div class="kp-head"><span class="kp-name">' + BR.esc(a.short) + '</span>';
     items += '<span class="kp-weight">Weight ' + BR.esc(weight ? weight.weight : "-") + ' / 3</span></div>';
     if (weight && weight.reason) {
@@ -747,7 +845,7 @@ BR.renderConsult = function (container, consult) {
     return;
   }
   var a = consult.advisor;
-  var html = '<div class="consult-head">' + BR.avatarThumb(a, "") + '<div><strong>' + BR.esc(a.short) + '</strong>';
+  var html = '<div class="consult-head">' + BR.characterFigure(a, "") + '<div><strong>' + BR.esc(a.short) + '</strong>';
   html += '<div class="muted">' + BR.esc(a.pillar) + '</div></div></div>';
   html += '<p class="consult-question">' + BR.esc(consult.question) + '</p>';
   if (consult.servedBy) { html += '<div>' + BR.providerBadge(consult.servedBy) + '</div>'; }

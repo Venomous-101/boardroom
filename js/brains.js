@@ -252,7 +252,9 @@ BR.splitWords = function (text) {
    sound (a, e, i, o, u) open, other starting sounds sit in the
    middle. When no word is given, the old four-step cycle
    (closed, mid, open, mid) runs instead. These are stylised
-   indicators on the portrait thumb, not lip-sync to a real person. */
+   indicators on the character figure, not lip-sync to a real person.
+   The returned name is a word state, not a CSS class: charMouth in
+   ui.js maps it to the figure's mouth class and GSAP scale. */
 BR.mouthClassFor = function (index, word) {
   if (typeof word === "string" && word.trim()) {
     var clean = word.trim().toLowerCase().replace(/[^a-z]/g, "");

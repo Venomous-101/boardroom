@@ -2,7 +2,12 @@
    The page holds no API key. Calls go through this deployment's own
    server function (/api/chat), which holds the key server-side.
    Past debates live only in this browser's localStorage.
-   Consult answers are never saved to history. */
+   Consult answers are never saved to history.
+   Motion: if the GSAP CDN loaded, the body carries gsap-on and
+   GSAP drives one-shot character motion (mouth, arm gesture, panel
+   entrance); the CSS keyframe loops stand down in that mode and
+   carry all motion when GSAP is absent, so the room never breaks
+   offline. Blink is pure CSS, staggered per seat, no timer. */
 
 var BR = (function () {
   if (typeof window !== "undefined") { window.BR = window.BR || {}; return window.BR; }
@@ -175,9 +180,9 @@ document.addEventListener("DOMContentLoaded", function () {
     } catch (e) { /* scrolling is a convenience, never a blocker */ }
   }
 
-  /* Reduced-motion flag is declared below with the blink timer, but
-     showError can run before that declaration executes, so this
-     helper reads the media query directly when it needs it. */
+  /* Reduced-motion flag is declared below with the other page
+     wiring, but showError can run before that declaration executes,
+     so this helper reads the media query directly when it needs it. */
   function reducedMotionLater() {
     try {
       return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
@@ -251,14 +256,15 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   /* Word-by-word speaking playback. After a step completes, the last
-     transcript entry reveals word by word while the speaker's portrait
-     cycles mouth states and leans toward the seat it addressed, when
-     there is one. Mouth states are stylised indicators, not lip-sync.
-     Under reduced motion, the full text shows at once and no mouth
-     cycling runs. Voice uses only the browser's built-in speech, only
-     when the toggle is on (off by default); nothing is sent anywhere
-     and no key is involved. Playback never blocks the debate: the
-     next step runs on its own schedule regardless of playback. */
+     transcript entry reveals word by word while the speaker's
+     character figure cycles mouth states and leans toward the seat
+     it addressed, when there is one. Mouth states are stylised
+     indicators, not lip-sync. Under reduced motion, the full text
+     shows at once and no mouth cycling runs. Voice uses only the
+     browser's built-in speech, only when the toggle is on (off by
+     default); nothing is sent anywhere and no key is involved.
+     Playback never blocks the debate: the next step runs on its own
+     schedule regardless of playback. */
   var playbackTimer = null;
   var playbackSeatEl = null;
   var playbackThumbEl = null;
@@ -282,7 +288,7 @@ document.addEventListener("DOMContentLoaded", function () {
     playbackBodyEl = null;
     playbackFullText = "";
     if (playbackThumbEl) {
-      ["mouth-closed", "mouth-mid", "mouth-open"].forEach(function (c) { playbackThumbEl.classList.remove(c); });
+      BR.charMouth(playbackThumbEl, null);
       playbackThumbEl = null;
     }
     if (playbackSeatEl) {
@@ -338,10 +344,18 @@ document.addEventListener("DOMContentLoaded", function () {
     if (reducedMotion) { if (onDone) { onDone(); } return; }
     var speakerId = entryEl.getAttribute("data-speaker") || "";
     var seatEl = speakerId ? els.stage.querySelector('[data-seat-id="' + speakerId + '"]') : null;
+    /* The mouth lives on the transcript entry's own figure first,
+       because the entry is always mounted while it plays; the stage
+       seat's figure is only a fallback. */
+    var entryFig = entryEl.querySelector(".char-figure");
+    if (entryFig) { playbackThumbEl = entryFig; }
     if (seatEl) {
       playbackSeatEl = seatEl;
-      var thumbEl = seatEl.querySelector(".thumb");
-      if (thumbEl) { playbackThumbEl = thumbEl; }
+      var seatFig = seatEl.querySelector(".char-figure");
+      if (seatFig && !playbackThumbEl) { playbackThumbEl = seatFig; }
+      /* One-shot arm gesture when the line starts speaking. GSAP
+         only; without it the CSS speaking loop carries the arm. */
+      if (seatFig) { BR.charGesture(seatFig); }
       var targetShort = entryEl.getAttribute("data-answer-to") || entryEl.getAttribute("data-disagree-with") || "";
       var targetId = "";
       if (targetShort && currentState) {
@@ -392,8 +406,7 @@ document.addEventListener("DOMContentLoaded", function () {
       i += 1;
       bodyEl.textContent = words.slice(0, i).join(" ");
       if (playbackThumbEl) {
-        ["mouth-closed", "mouth-mid", "mouth-open"].forEach(function (c) { playbackThumbEl.classList.remove(c); });
-        playbackThumbEl.classList.add(BR.mouthClassFor(i - 1, words[i - 1]));
+        BR.charMouth(playbackThumbEl, BR.mouthClassFor(i - 1, words[i - 1]));
       }
       if (i >= words.length) {
         bodyEl.textContent = fullText;
@@ -733,26 +746,14 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   });
 
-  /* Idle blink: one random idle seat closes its eyelid for 260ms on
-     a 2.4 to 6.6s cycle. Skipped entirely under
-     prefers-reduced-motion. */
+  /* Blink is pure CSS now: the figure's eyes close on a 4.6s cycle
+     staggered per seat by --blink-delay, set by the renderer, so no
+     timer is needed and the room never blinks in unison. Skipped
+     entirely under prefers-reduced-motion by the stylesheet. */
   var reducedMotion = false;
   try {
     reducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   } catch (e) { /* ignore */ }
-  function scheduleBlink() {
-    if (reducedMotion) { return; }
-    var delay = 2400 + Math.random() * 4200;
-    setTimeout(function () {
-      var thumbs = els.stage.querySelectorAll(".stage-seat:not(.speaking):not(.playing) .thumb");
-      if (thumbs.length > 0 && !els.debateView.classList.contains("hidden")) {
-        var pick = thumbs[Math.floor(Math.random() * thumbs.length)];
-        pick.classList.add("blinking");
-        setTimeout(function () { pick.classList.remove("blinking"); }, 280);
-      }
-      scheduleBlink();
-    }, delay);
-  }
 
   /* Live character counters against the real field limits, and
      specific form errors that name the field and point at it. */
@@ -920,7 +921,16 @@ document.addEventListener("DOMContentLoaded", function () {
   applyMode();
   renderHistoryList();
   showResumePanel();
-  scheduleBlink();
+  /* GSAP flag: when the CDN loaded, CSS speaking loops stand down
+     and GSAP drives one-shot character motion instead. The one-time
+     panel entrance runs here only, never on a later render, so a
+     debate step never re-animates the whole page. */
+  try {
+    if (typeof window !== "undefined" && window.gsap) {
+      document.body.classList.add("gsap-on");
+      window.gsap.from(".panel", { y: 14, opacity: 0, duration: 0.5, stagger: 0.06, ease: "power2.out", clearProps: "all" });
+    }
+  } catch (e) { /* without GSAP the CSS fallback carries all motion */ }
   refreshCounters();
   if (els.title) { els.title.addEventListener("input", refreshCounters); }
   if (els.context) { els.context.addEventListener("input", refreshCounters); }
