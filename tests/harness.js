@@ -42,7 +42,10 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
    setTimeout wrapper that records each attempt cap. The recorded
    caps prove the inertness rule: a Groq attempt with no OpenRouter
    key keeps the full 55 second deadline, while a Groq attempt with a
-   fallback key behind it is capped at 25 seconds. */
+   fallback key behind it is capped at 12 seconds and each walk leg
+   at 20 seconds. Every OpenRouter request carries exactly one model:
+   a long models array in one request was rejected live with
+   HTTP 400, so the walk sends one model per request. */
 
 const FAKE_GROQ_KEY = "env-groq-key-for-tests";
 const FAKE_OR_KEY = "env-openrouter-key-for-tests";
@@ -120,7 +123,11 @@ function groqErr(status) {
 }
 
 function orOk(body) {
-  return mockResp(true, 200, { model: body.models[0], choices: [{ message: { content: "fallback text" } }] });
+  return mockResp(true, 200, { model: body.model, choices: [{ message: { content: "fallback text" } }] });
+}
+
+function orEmpty() {
+  return mockResp(true, 200, { choices: [{ message: { content: "" } }] });
 }
 
 function orErr(status) {
@@ -143,12 +150,15 @@ async function serverTests() {
   const r1 = await callServer(t1, base, "10.0.0.1");
   assert("server: groq 429 falls back to openrouter", r1.statusCode === 200 && r1.body.ok === true && r1.body.text === "fallback text", JSON.stringify(r1.body));
   assert("server: fallback servedBy is openrouter chain head", eq(r1.body.servedBy, { provider: "openrouter", model: BR.OPENROUTER_FREE_CHAIN[0] }), JSON.stringify(r1.body.servedBy));
-  const orCall = t1.calls.find(function (c) { return c.url.indexOf("openrouter.ai") !== -1; });
-  assert("server: fallback sends the full free chain", !!orCall && eq(orCall.body.models, BR.OPENROUTER_FREE_CHAIN) && orCall.body.model === BR.OPENROUTER_FREE_CHAIN[0], JSON.stringify(orCall && orCall.body));
+  const orCalls1 = t1.calls.filter(function (c) { return c.url.indexOf("openrouter.ai") !== -1; });
+  const orCall = orCalls1[0];
+  assert("server: fallback sends one model per request, chain head first, never a models array",
+    orCalls1.length === 1 && !!orCall && orCall.body.model === BR.OPENROUTER_FREE_CHAIN[0] && !("models" in orCall.body),
+    JSON.stringify(orCall && orCall.body));
   assert("server: groq and openrouter auth use their own keys",
     t1.calls.length === 2 && t1.calls[0].auth === "Bearer " + FAKE_GROQ_KEY && orCall.auth === "Bearer " + FAKE_OR_KEY,
     JSON.stringify(t1.calls.map(function (c) { return c.auth; })));
-  assert("server: fallback attempt caps are 25s each", eq(t1.timeouts, [25000, 25000]), JSON.stringify(t1.timeouts));
+  assert("server: fallback attempt caps are 12s groq and 20s walk leg", eq(t1.timeouts, [12000, 20000]), JSON.stringify(t1.timeouts));
 
   /* All free fallbacks exhausted: primary failure reported, flagged. */
   const t2 = loadServer(bothKeys, scriptFor([
@@ -160,6 +170,11 @@ async function serverTests() {
     r2.body.ok === false && r2.body.status === 429 && r2.body.fallbackExhausted === true, JSON.stringify(r2.body));
   assert("server: exhausted fallback names its own status and detail",
     r2.body.fallbackStatus === 429 && typeof r2.body.fallbackBody === "string" && r2.body.fallbackBody.indexOf("openrouter error 429") !== -1, JSON.stringify(r2.body));
+  assert("server: walk is bounded: all four free models tried, one request each, then it stops",
+    r2.body.fallbackAttempts === 4 &&
+    t2.calls.filter(function (c) { return c.url.indexOf("openrouter.ai") !== -1; }).length === 4 &&
+    eq(t2.calls.filter(function (c) { return c.url.indexOf("openrouter.ai") !== -1; }).map(function (c) { return c.body.model; }), BR.OPENROUTER_FREE_CHAIN),
+    JSON.stringify(t2.calls.map(function (c) { return c.body.model; })) + " attempts=" + r2.body.fallbackAttempts);
 
   /* Groq 401 fails fast even with a fallback key present. */
   const t3 = loadServer(bothKeys, scriptFor([
@@ -171,21 +186,74 @@ async function serverTests() {
     r3.body.ok === false && r3.body.status === 401 && !r3.body.fallbackExhausted && !r3.body.fallbackSkipped && t3.calls.length === 1,
     JSON.stringify(r3.body) + " calls=" + t3.calls.length);
 
-  /* OpenRouter direct with a free model: requested model first, then the chain. */
+  /* OpenRouter direct with a free model: requested model first, one request. */
   const t4 = loadServer(bothKeys, scriptFor([{ match: "openrouter.ai", make: orOk }]));
   const r4 = await callServer(t4, { provider: "openrouter", model: BR.OPENROUTER_FREE_CHAIN[2], system: "sys", user: "usr" }, "10.0.0.4");
-  const expected4 = [BR.OPENROUTER_FREE_CHAIN[2], BR.OPENROUTER_FREE_CHAIN[0], BR.OPENROUTER_FREE_CHAIN[1]];
-  assert("server: openrouter direct free model goes first then the chain",
-    r4.body.ok === true && eq(t4.calls[0].body.models, expected4) && r4.body.servedBy.model === BR.OPENROUTER_FREE_CHAIN[2],
+  assert("server: openrouter direct free model goes first, one model per request",
+    r4.body.ok === true && t4.calls.length === 1 && t4.calls[0].body.model === BR.OPENROUTER_FREE_CHAIN[2] &&
+    !("models" in t4.calls[0].body) && r4.body.servedBy.model === BR.OPENROUTER_FREE_CHAIN[2],
     JSON.stringify(t4.calls[0] && t4.calls[0].body) + " " + JSON.stringify(r4.body.servedBy));
-  /* Full-deadline caps are timing-dependent: the cap is min(55000, remaining time), so the recorded value is 55000 minus elapsed milliseconds. Assert the property (full deadline, not the 25s fallback cap), not the exact millisecond. */
-  assert("server: openrouter direct single attempt keeps the full deadline", t4.timeouts.length === 1 && t4.timeouts[0] > 25000 && t4.timeouts[0] <= 55000, JSON.stringify(t4.timeouts));
+  assert("server: openrouter direct leg uses the 20s walk cap", eq(t4.timeouts, [20000]), JSON.stringify(t4.timeouts));
+
+  /* OpenRouter direct walk: first model 429s, walk moves to the next
+     model in order (requested first, then the chain) and succeeds. */
+  let t4bCount = 0;
+  const t4b = loadServer(bothKeys, scriptFor([{ match: "openrouter.ai", make: function (body) {
+    t4bCount += 1;
+    return t4bCount === 1 ? orErr(429) : orOk(body);
+  } }]));
+  const r4b = await callServer(t4b, { provider: "openrouter", model: BR.OPENROUTER_FREE_CHAIN[2], system: "sys", user: "usr" }, "10.0.0.41");
+  assert("server: walk moves to next model on 429 then succeeds",
+    r4b.body.ok === true && t4b.calls.length === 2 &&
+    t4b.calls[0].body.model === BR.OPENROUTER_FREE_CHAIN[2] &&
+    t4b.calls[1].body.model === BR.OPENROUTER_FREE_CHAIN[0] &&
+    r4b.body.servedBy.model === BR.OPENROUTER_FREE_CHAIN[0],
+    JSON.stringify(t4b.calls.map(function (c) { return c.body.model; })) + " " + JSON.stringify(r4b.body.servedBy));
+
+  /* Groq fallback walk: two legs fail, third serves, in chain order. */
+  let t4cCount = 0;
+  const t4c = loadServer(bothKeys, scriptFor([
+    { match: "api.groq.com", make: function () { return groqErr(429); } },
+    { match: "openrouter.ai", make: function (body) {
+      t4cCount += 1;
+      return t4cCount <= 2 ? orErr(500) : orOk(body);
+    } }
+  ]));
+  const r4c = await callServer(t4c, base, "10.0.0.42");
+  const orCalls4c = t4c.calls.filter(function (c) { return c.url.indexOf("openrouter.ai") !== -1; });
+  assert("server: groq fallback walk tries legs in chain order until one serves",
+    r4c.body.ok === true && orCalls4c.length === 3 &&
+    eq(orCalls4c.map(function (c) { return c.body.model; }), BR.OPENROUTER_FREE_CHAIN.slice(0, 3)) &&
+    r4c.body.servedBy.model === BR.OPENROUTER_FREE_CHAIN[2],
+    JSON.stringify(orCalls4c.map(function (c) { return c.body.model; })) + " " + JSON.stringify(r4c.body.servedBy));
+
+  /* Empty 200 reply moves the walk on, like a 429 does. */
+  let t4dCount = 0;
+  const t4d = loadServer(bothKeys, scriptFor([{ match: "openrouter.ai", make: function (body) {
+    t4dCount += 1;
+    return t4dCount === 1 ? orEmpty() : orOk(body);
+  } }]));
+  const r4d = await callServer(t4d, { provider: "openrouter", model: BR.OPENROUTER_FREE_CHAIN[0], system: "sys", user: "usr" }, "10.0.0.43");
+  assert("server: walk moves to next model on an empty reply then succeeds",
+    r4d.body.ok === true && t4d.calls.length === 2 &&
+    t4d.calls[1].body.model === BR.OPENROUTER_FREE_CHAIN[1] &&
+    r4d.body.servedBy.model === BR.OPENROUTER_FREE_CHAIN[1],
+    JSON.stringify(t4d.calls.map(function (c) { return c.body.model; })));
+
+  /* Non-retryable failure stops the walk after one attempt. */
+  const t4e = loadServer(bothKeys, scriptFor([{ match: "openrouter.ai", make: function () { return orErr(401); } }]));
+  const r4e = await callServer(t4e, { provider: "openrouter", model: BR.OPENROUTER_FREE_CHAIN[0], system: "sys", user: "usr" }, "10.0.0.44");
+  assert("server: walk stops on 401 after one attempt, never exhausted",
+    r4e.body.ok === false && t4e.calls.length === 1 &&
+    r4e.body.walkAttempts === 1 && r4e.body.walkExhausted === false,
+    JSON.stringify(r4e.body) + " calls=" + t4e.calls.length);
 
   /* OpenRouter direct with a paid model: sent alone, never chained. */
   const t5 = loadServer(bothKeys, scriptFor([{ match: "openrouter.ai", make: orOk }]));
   const r5 = await callServer(t5, { provider: "openrouter", model: "anthropic/claude-sonnet-5", system: "sys", user: "usr" }, "10.0.0.5");
   assert("server: openrouter direct paid model stays alone",
-    r5.body.ok === true && eq(t5.calls[0].body.models, ["anthropic/claude-sonnet-5"]), JSON.stringify(t5.calls[0] && t5.calls[0].body));
+    r5.body.ok === true && t5.calls.length === 1 && t5.calls[0].body.model === "anthropic/claude-sonnet-5" &&
+    !("models" in t5.calls[0].body), JSON.stringify(t5.calls[0] && t5.calls[0].body));
 
   /* Bad provider rejected before any provider call. */
   const t6 = loadServer(bothKeys, scriptFor([]));
@@ -209,8 +277,8 @@ async function serverTests() {
 
   /* Chain discipline: free only, matches the page list, head is the default. */
   const chain = t1.handler.OPENROUTER_FREE_CHAIN;
-  assert("server: chain is free only, at most 3, and matches the page list",
-    Array.isArray(chain) && chain.length === 3 && chain.every(function (m) { return /:free$/.test(m); }) && eq(chain, BR.OPENROUTER_FREE_CHAIN),
+  assert("server: chain is free only, four models, and matches the page list",
+    Array.isArray(chain) && chain.length === 4 && chain.every(function (m) { return /:free$/.test(m); }) && eq(chain, BR.OPENROUTER_FREE_CHAIN),
     JSON.stringify(chain));
   assert("server: openrouter default model is the chain head",
     BR.PROVIDERS.openrouter.defaultModel === BR.OPENROUTER_FREE_CHAIN[0], BR.PROVIDERS.openrouter.defaultModel);
@@ -223,7 +291,7 @@ async function serverTests() {
     ru1.body.ok === false && ru1.body.status === 429 && ru1.body.fallbackSkipped === "no_openrouter_key" && !ru1.body.fallbackExhausted &&
     u1.calls.length === 1 && u1.calls[0].url.indexOf("api.groq.com") !== -1,
     JSON.stringify(ru1.body) + " calls=" + u1.calls.length);
-  assert("unset key: failed groq attempt keeps the full deadline, not the 25s fallback cap",
+  assert("unset key: failed groq attempt keeps the full deadline, not the 12s fallback cap",
     u1.timeouts.length === 1 && u1.timeouts[0] > 25000 && u1.timeouts[0] <= 55000, JSON.stringify(u1.timeouts));
   const u2 = loadServer(groqOnly, scriptFor([{ match: "api.groq.com", make: function () { return groqOk("groq text"); } }]));
   const ru2 = await callServer(u2, base, "10.0.1.2");
@@ -1027,13 +1095,13 @@ async function main() {
       var c = { innerHTML: "" };
       BR.renderStage(c, s, "operator", { from: BR.PERSONAS[0], to: BR.PERSONAS[1], kind: "argument" });
       return c.innerHTML.indexOf("look-right") !== -1 && c.innerHTML.indexOf("addressed") !== -1 &&
-        c.innerHTML.indexOf("look-left") !== -1 && c.innerHTML.indexOf("eyelid") !== -1 &&
+        c.innerHTML.indexOf("look-left") !== -1 && c.innerHTML.indexOf("char-eyes") !== -1 &&
         c.innerHTML.indexOf('data-from-idx="0"') !== -1;
     })());
-  assert("character CSS has eyelid, look, reaction, and scrolling table rules, and no transition all",
+  assert("character CSS has blinking eyes, head look, reaction, and scrolling table rules, and no transition all",
     (function () {
       const css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
-      return css.indexOf(".thumb .eyelid") !== -1 && css.indexOf(".stage-seat.look-left") !== -1 &&
+      return css.indexOf(".char-eyes") !== -1 && css.indexOf(".stage-seat.look-left .char-head") !== -1 &&
         css.indexOf(".thumb-wrap.react-nod") !== -1 && css.indexOf(".table-scroll") !== -1 &&
         css.indexOf("transition: all") === -1;
     })());
@@ -1048,7 +1116,8 @@ async function main() {
   assert("stage CSS has mouth, lean, and voice toggle rules",
     (function () {
       const css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
-      return css.indexOf(".thumb.mouth-open") !== -1 && css.indexOf(".stage-seat.playing-lean") !== -1 &&
+      return css.indexOf(".char-mouth") !== -1 && css.indexOf(".char-figure.char-mouth-open") !== -1 &&
+        css.indexOf(".stage-seat.playing-lean") !== -1 &&
         css.indexOf(".stage-seat.lean-toward") !== -1 && css.indexOf(".stage-round") !== -1 &&
         css.indexOf(".round-table") !== -1 && css.indexOf(".voice-toggle-label") !== -1 && css.indexOf("prefers-reduced-motion") !== -1;
     })());
@@ -1258,16 +1327,39 @@ async function main() {
         BR.charStateFor({ offer: "not-a-state" }, "offer") === "idle" &&
         BR.PERSONAS.every(function (p) { return idle[p.id] === "idle"; });
     })());
-  assert("mouth overlay coordinates exist for all 8 portrait seats and sit on the face",
+  assert("character figures exist for all 8 seats, each distinct, with head, eyes, mouth, and arm on the face",
     (function () {
       const known = ["operator", "offer", "investor", "marketer", "philosopher", "founder", "saas", "eos"];
-      return known.every(function (id) {
-        const pos = BR.MOUTH_POS[id];
-        const thumb = BR.avatarThumb({ id: id, color: "#111111", initials: "X" }, "large");
-        return !!pos && pos.x >= 40 && pos.x <= 60 && pos.y >= 30 && pos.y <= 55 &&
-          thumb.indexOf("--mouth-x:" + pos.x + "%") !== -1 && thumb.indexOf("--mouth-y:" + pos.y + "%") !== -1 &&
-          thumb.indexOf('class="mouth"') !== -1;
-      }) && BR.avatarThumb({ id: "custom", color: "#111111", initials: "C" }, "large").indexOf('class="mouth"') === -1;
+      const seen = {};
+      const ok = known.every(function (id) {
+        const fig = BR.characterFigure({ id: id, color: "#111111", initials: "X" }, "large");
+        if (seen[fig]) { return false; }
+        seen[fig] = true;
+        return fig.indexOf("char-figure large") !== -1 && fig.indexOf("char-svg") !== -1 &&
+          fig.indexOf("char-head") !== -1 && fig.indexOf("char-eyes") !== -1 &&
+          fig.indexOf("char-mouth") !== -1 && fig.indexOf("char-arm") !== -1 &&
+          fig.indexOf("--blink-delay:") !== -1;
+      });
+      const custom = BR.characterFigure({ id: "custom", color: "#111111", initials: "C" }, "large");
+      return ok && custom.indexOf("char-initials") !== -1 && custom.indexOf("char-mouth") === -1;
+    })());
+  assert("character mouth driver maps word states to figure classes and resets cleanly",
+    (function () {
+      const fig = { classList: { list: [], add: function (c) { if (this.list.indexOf(c) === -1) { this.list.push(c); } }, remove: function () { var args = Array.prototype.slice.call(arguments); var self = this; args.forEach(function (c) { var i = self.list.indexOf(c); if (i !== -1) { self.list.splice(i, 1); } }); } }, querySelector: function () { return null; } };
+      BR.charMouth(fig, "mouth-open");
+      const opened = fig.classList.list.indexOf("char-mouth-open") !== -1;
+      BR.charMouth(fig, "mouth-mid");
+      const moved = fig.classList.list.indexOf("char-mouth-open") === -1 && fig.classList.list.indexOf("char-mouth-mid") !== -1;
+      BR.charMouth(fig, null);
+      const cleared = fig.classList.list.length === 0;
+      return opened && moved && cleared && typeof BR.charGesture === "function";
+    })());
+  assert("character blink delays are deterministic per seat and inside one blink cycle",
+    (function () {
+      return BR.PERSONAS.every(function (p) {
+        var d = BR.blinkDelayFor(p.id);
+        return d === BR.blinkDelayFor(p.id) && d >= 0 && d < 4.6;
+      });
     })());
   assert("thinking stage renders a think bubble, a Thinking label, and a ponder state, never a speaking seat",
     (function () {
@@ -1303,7 +1395,9 @@ async function main() {
     (function () {
       const css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
       const block = css.slice(css.indexOf("@media (prefers-reduced-motion: reduce)"));
-      return block.indexOf(".stage-seat.playing") !== -1 && block.indexOf(".thumb.talking") !== -1 &&
+      return block.indexOf(".stage-seat.playing") !== -1 && block.indexOf(".char-figure.talking") !== -1 &&
+        block.indexOf(".char-head") !== -1 && block.indexOf(".char-eyes") !== -1 &&
+        block.indexOf(".char-mouth") !== -1 && block.indexOf(".char-arm") !== -1 &&
         block.indexOf(".stage-seat.state-thinking") !== -1 && block.indexOf(".round-arrow-line") !== -1 &&
         block.indexOf("think-bubble") !== -1;
     })());
@@ -1379,9 +1473,9 @@ async function main() {
       const css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
       const has = function (s) { return css.indexOf(s) !== -1; };
       return has("translateY(-22px)") && has("rotate(8deg)") && has("rotate(9deg)") &&
-        has("translateX(14px)") && has("rotate(11deg)") &&
+        has("translateX(3px)") && has("rotate(14deg)") &&
         has("translateY(8px)") && has("translateX(10px)") && has("rotate(10deg)") &&
-        has("width: 26%") && has("height: 22%") &&
+        has("scaleY(1)") && has("scaleY(0.6)") &&
         has("width: 10px") && has("stroke-dasharray: 10 6") &&
         has(".stage-seat.state-thinking {") && has("gap: 48px 12px");
     })());
@@ -1454,6 +1548,106 @@ async function main() {
     assert("client: JSON server reply still parses after the parse-guard change",
       good.ok === true && good.text === "hello" && good.servedBy.provider === "groq", JSON.stringify(good));
   })();
+
+  /* ---------- Live-test fixes: key points cards, glass, GSAP, widths ---------- */
+  assert("key points verdict renders stacked cards, never a table, with every line in full",
+    (function () {
+      var s = makeDebate(1);
+      s.director = { weights: {}, cruxes: [], brief: "B.", assumptions: [] };
+      s.final = {};
+      s.verdict = { pillarScores: {} };
+      var longLine = "The full final line must print word for word with nothing cut off, even when it runs long across the whole card width.";
+      BR.PERSONAS.forEach(function (p) {
+        s.director.weights[p.id] = { weight: 2, reason: "R." };
+        s.final[p.id] = { vote: "Endorse", finalScore: 8, line: longLine };
+        s.verdict.pillarScores[p.id] = 7;
+      });
+      var c = { innerHTML: "" };
+      BR.renderKeyPoints(c, s);
+      var cards = (c.innerHTML.match(/class="kp-item"/g) || []).length;
+      return c.innerHTML.indexOf("<table") === -1 && cards === BR.PERSONAS.length &&
+        c.innerHTML.indexOf(longLine) !== -1 && c.innerHTML.indexOf("Weight 2 / 3") !== -1 &&
+        c.innerHTML.indexOf("Pillar 7/10") !== -1 && c.innerHTML.indexOf("Endorse (8/10)") !== -1;
+    })());
+  assert("table CSS keeps headers whole and breaks cells only at word boundaries",
+    (function () {
+      const css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
+      var thStart = css.indexOf(".weights-table th, .score-table th {");
+      var thBlock = css.slice(thStart, css.indexOf("}", thStart));
+      var cellStart = css.indexOf(".weights-table th, .weights-table td");
+      var cellBlock = css.slice(cellStart, css.indexOf("}", cellStart));
+      return thBlock.indexOf("white-space: nowrap") !== -1 &&
+        cellBlock.indexOf("overflow-wrap: break-word") !== -1 &&
+        cellBlock.indexOf("overflow-wrap: anywhere") === -1 &&
+        css.indexOf(".table-scroll { overflow-x: auto; }") !== -1 &&
+        css.indexOf(".table-scroll table { min-width: 520px; }") !== -1;
+    })());
+  assert("glass panels use translucent backgrounds with blur and keep AA contrast over the blend",
+    (function () {
+      const css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
+      function lum(rgb) {
+        function f(c) { c = c / 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
+        return 0.2126 * f(rgb[0]) + 0.7152 * f(rgb[1]) + 0.0722 * f(rgb[2]);
+      }
+      function ratio(fg, bg) {
+        var l1 = lum(fg), l2 = lum(bg);
+        return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+      }
+      /* Glass rgba(23,30,38,0.72) over canvas #0f1419 blends to
+         about rgb(21,27,34); body and muted text must still pass AA. */
+      var a = 0.72;
+      var blend = [Math.round(a * 23 + (1 - a) * 15), Math.round(a * 30 + (1 - a) * 20), Math.round(a * 38 + (1 - a) * 25)];
+      return css.indexOf("--glass-bg: rgba(23, 30, 38, 0.72)") !== -1 &&
+        css.indexOf(".panel {") !== -1 && css.indexOf("backdrop-filter: blur(14px)") !== -1 &&
+        css.indexOf(".tx-entry {") !== -1 && css.indexOf(".kp-item {") !== -1 &&
+        ratio([232, 236, 241], blend) >= 4.5 && ratio([154, 167, 180], blend) >= 4.5;
+    })());
+  assert("GSAP loads from CDN and main.js only enables GSAP motion when it exists",
+    (function () {
+      const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+      const main = fs.readFileSync(path.join(root, "js/main.js"), "utf8");
+      return html.indexOf("cdnjs.cloudflare.com/ajax/libs/gsap/") !== -1 &&
+        main.indexOf('document.body.classList.add("gsap-on")') !== -1 &&
+        main.indexOf("window.gsap") !== -1 &&
+        main.indexOf("BR.charGesture") !== -1;
+    })());
+  assert("layout audit: no panel overflows the viewport at desktop, tablet, phone, or narrow widths",
+    (function () {
+      const css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
+      if (css.indexOf(".room-layout {") === -1 || css.indexOf("grid-template-columns: minmax(0, 1fr) 340px") === -1) { return false; }
+      if (css.indexOf("@media (max-width: 850px)") === -1 || css.indexOf("@media (max-width: 700px)") === -1) { return false; }
+      /* Aside is 340px beside the stage above 850px, stacked below
+         it at or below 850px. Stage content width is the viewport
+         minus main padding (20px each side), capped at 1080px. */
+      var viewports = [1440, 1080, 900, 851, 850, 700, 600, 390, 360];
+      for (var i = 0; i < viewports.length; i++) {
+        var vp = viewports[i];
+        var content = Math.min(vp - 40, 1080);
+        var stage = vp > 850 ? content - 340 - 20 : content;
+        if (stage <= 0) { return false; }
+        if (vp > 850 && 340 > content) { return false; }
+        /* Round layout above 700px: the centre table is at most
+           420px and at most 48 percent of the stage, so it always
+           fits inside the stage. Grid layout at or below 700px:
+           two columns with a 12px gap, seat cards static at full
+           width, so nothing can escape the viewport edge. */
+        if (vp > 700) {
+          var table = Math.min(0.48 * stage, 420);
+          if (table > stage) { return false; }
+        } else {
+          if (css.indexOf(".stage-seat .seat-card, .stage-seat.card-below .seat-card") === -1) { return false; }
+        }
+        /* Form grid: 220px minimum column, so at the narrowest
+           viewport (360px, 320px content) it collapses to one
+           column instead of squeezing. */
+        if (content < 220) { return false; }
+      }
+      /* Key points cards and transcript entries are full-width flex
+         rows with a shrinkable content column, so their text wraps
+         instead of overflowing. */
+      return css.indexOf(".kp-content { min-width: 0; flex: 1; }") !== -1 &&
+        css.indexOf(".kp-item {") !== -1 && css.indexOf(".tx-entry {") !== -1;
+    })());
 
   /* ---------- Server function: OpenRouter fallback ---------- */
   await serverTests();
