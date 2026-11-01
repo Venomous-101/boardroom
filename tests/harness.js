@@ -282,6 +282,12 @@ async function serverTests() {
     JSON.stringify(chain));
   assert("server: openrouter default model is the chain head",
     BR.PROVIDERS.openrouter.defaultModel === BR.OPENROUTER_FREE_CHAIN[0], BR.PROVIDERS.openrouter.defaultModel);
+  /* Chain order is pinned to the verified live catalog (1 Nov 2026):
+     inkling first, then nemotron ultra, gemma 31b, dots note. If the
+     free roster rotates, update both lists and this test together. */
+  assert("server: chain order is inkling, nemotron ultra, gemma 31b, dots note",
+    eq(chain, ["thinkingmachines/inkling:free", "nvidia/nemotron-3-ultra-550b-a55b:free", "google/gemma-4-31b-it:free", "dots-studio/dots-3-note-preview:free"]),
+    JSON.stringify(chain));
 
   /* Unset-key case: the fallback must be completely inert. */
   const groqOnly = { GROQ_API_KEY: FAKE_GROQ_KEY };
@@ -802,6 +808,26 @@ async function main() {
       var entry = s.transcript[s.transcript.length - 1];
       return applied.ok === true && entry.answerTo === "Philosopher" && entry.targetId === "philosopher";
     })());
+  assert("invented links are caught: brief links pass, foreign links fail, plain text passes",
+    (function () {
+      var brief = "See our pricing page at https://example.com/pricing for the numbers.";
+      return BR.containsInventedLink("Read https://example.com/pricing for detail.", brief) === false &&
+        BR.containsInventedLink("See https://fake-source.example/report for proof.", brief) === true &&
+        BR.containsInventedLink("Visit www.not-in-brief.example for more.", brief) === true &&
+        BR.containsInventedLink("No links here, just a plain argument.", brief) === false &&
+        BR.containsInventedLink("Any https://link.example is invented with no brief.", "") === true &&
+        BR.containsInventedLink("", brief) === false;
+    })());
+  assert("applyStepResult rejects a card carrying an invented link and stores a clean card",
+    (function () {
+      var s = makeDebate(1);
+      s.opening = {};
+      var bad = { stance: "Yes", optionScores: { A: 8, B: 5, C: 3 }, pillarScore: 7, confidence: 4, ruinRisk: "none", door: "two-way", reason: "See https://invented.example for the data.", changeMind: "N." };
+      var good = { stance: "Yes", optionScores: { A: 8, B: 5, C: 3 }, pillarScore: 7, confidence: 4, ruinRisk: "none", door: "two-way", reason: "Clean reason.", changeMind: "N." };
+      var rejected = BR.applyStepResult(s, { key: "opening:operator", advisorId: "operator" }, bad);
+      var stored = BR.applyStepResult(s, { key: "opening:operator", advisorId: "operator" }, good);
+      return rejected.ok === false && stored.ok === true && !!s.opening.operator && s.opening.operator.reason === "Clean reason.";
+    })());
   assert("discussion prompt attacks the shared case when everyone agrees",
     (function () {
       const sU = makeDebate(1);
@@ -1151,6 +1177,12 @@ async function main() {
       return slicesOk && personaOk && customOk &&
         BR.directorSystem.indexOf(rules) !== -1 && BR.consultSystem.indexOf(rules) !== -1;
     })());
+  assert("room rules demand a trade-off, a counter to the own lens, same-sentence assumption labels, and unknown stated as unknown",
+    BR.ROOM_RULES.indexOf("trade-off") !== -1 &&
+    BR.ROOM_RULES.indexOf("counter to your own lens") !== -1 &&
+    BR.ROOM_RULES.indexOf("as an assumption in the same sentence") !== -1 &&
+    BR.ROOM_RULES.indexOf("say unknown") !== -1,
+    BR.ROOM_RULES);
   assert("page loads the brain module and carries the exact footer credit and simulation labels",
     (function () {
       const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
@@ -1766,6 +1798,17 @@ async function main() {
         BR.ROOM_RULES.indexOf("one-line headline") !== -1 &&
         BR.ROOM_RULES.indexOf("Never repeat a seat") !== -1;
     })());
+  assert("debate and discussion prompts demand a named trade-off, and the director brief names the riskiest assumption",
+    (function () {
+      const s = makeDebate(1);
+      s.director = { weights: {}, cruxes: [], brief: "B.", assumptions: [] };
+      const adv = BR.PERSONAS[0];
+      const debate = BR.debateUser(s, adv, {}, 1);
+      const discussion = BR.discussionUser(s, adv, BR.PERSONAS[1], null);
+      const director = BR.directorUser(s);
+      return debate.indexOf("trade-off") !== -1 && discussion.indexOf("trade-off") !== -1 &&
+        director.indexOf("riskiest assumption") !== -1 && director.indexOf("ranked riskiest first") !== -1;
+    })());
   assert("validators enforce the caps even when a model ignores them",
     (function () {
       const long = new Array(120).join("word ");
@@ -1825,6 +1868,13 @@ async function main() {
       const main = fs.readFileSync(path.join(root, "js/main.js"), "utf8");
       return main.indexOf('".tx-expand"') !== -1 && main.indexOf('".tx-full"') !== -1 &&
         main.indexOf("Hide full text") !== -1;
+    })());
+  assert("consult cap is 250 words in both the page text and the engine prompt",
+    (function () {
+      const main = fs.readFileSync(path.join(root, "js/main.js"), "utf8");
+      const consult = BR.consultUser({ title: "T", context: "C", options: [], focus: "balanced" }, BR.PERSONAS[0]);
+      return main.indexOf("under 400 words") === -1 && main.indexOf("under 250 words") !== -1 &&
+        consult.indexOf("under 250 words") !== -1;
     })());
 
   /* ---------- Server function: OpenRouter fallback ---------- */
