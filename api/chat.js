@@ -7,33 +7,44 @@
    to a third party.
    No request or response body is ever logged here.
    When Groq is rate-limited or errors, the function automatically
-   tries free OpenRouter models (OPENROUTER_FREE_CHAIN below) in one
-   call with OpenRouter's models array. The chain lists free models
-   only, so the function never spends money on its own. Each success
-   response names the provider and model that served it, so a
-   fallback is visible, never silent. No HTTP-Referer or title header
-   is sent to OpenRouter, so nothing about this deployment leaks to a
-   third party through request headers. */
+   walks free OpenRouter models (OPENROUTER_FREE_CHAIN below) one
+   request at a time, best model first, until one serves the call.
+   A long models array in a single request was rejected live with
+   HTTP 400 on 29 Oct 2026, so no request ever carries more than
+   one model. The chain lists free models only, so the function
+   never spends money on its own. Each success response names the
+   provider and model that served it, so a fallback is visible,
+   never silent. No HTTP-Referer or title header is sent to
+   OpenRouter, so nothing about this deployment leaks to a third
+   party through request headers. */
 
 var MAX_MODEL = 200;
 var MAX_SYSTEM = 8000;
 var MAX_USER = 12000;
 var MAX_PROVIDER_BODY = 400;
-var ATTEMPT_TIMEOUT_MS = 25000;
+var ATTEMPT_TIMEOUT_MS = 12000;
+var WALK_LEG_CAP_MS = 20000;
 var FUNCTION_DEADLINE_MS = 55000;
 var RATE_WINDOW_MS = 10 * 60 * 1000;
 var RATE_MAX = 120;
 
 /* Free-only fallback chain, verified against OpenRouter's live model
-   catalog at build time. Every id ends in :free. The free roster
-   rotates, so if fallback starts failing, re-check the live list at
+   catalog on 1 Nov 2026: every id below was present in the live
+   catalog with prompt and completion price 0. Order is best first
+   by the catalog's own benchmark block (coding, agentic):
+   Inkling 52.1/22.5, Nemotron Ultra 49.3/20.1, Gemma 4 31B
+   43.4/4.2, Dots3-Note lightest. The free roster rotates, so if
+   fallback starts failing, re-check the live list at
    openrouter.ai/models with the free filter before assuming an
-   outage. Keep in sync with js/providers.js; the harness asserts the
-   two lists match. */
+   outage. Dots3-Note Preview carries a preview expiry of
+   2026-12-31 in the catalog; when it goes, drop it from the chain
+   rather than letting the walk end on it. Keep in sync with
+   js/providers.js; the harness asserts the two lists match. */
 var OPENROUTER_FREE_CHAIN = [
+  "thinkingmachines/inkling:free",
+  "nvidia/nemotron-3-ultra-550b-a55b:free",
   "google/gemma-4-31b-it:free",
-  "dots-studio/dots-3-note-preview:free",
-  "nvidia/nemotron-3-ultra-550b-a55b:free"
+  "dots-studio/dots-3-note-preview:free"
 ];
 
 /* Per-instance tripwire only: serverless instances do not share this
@@ -86,23 +97,37 @@ function providerError(status, bodyText) {
   return { ok: false, status: status, body: (bodyText || "").slice(0, MAX_PROVIDER_BODY) };
 }
 
-/* Models array for an OpenRouter call. A requested free model goes
+/* Walk order for an OpenRouter call. A requested free model goes
    first, then the rest of the free chain. A requested paid model is
    sent alone: the chain never adds a paid model, and a paid choice
-   stays the user's explicit choice. */
-function openRouterModelsFor(requested) {
+   stays the user's explicit choice. The walk tries these in order,
+   one request each, never more than one model per request. */
+function openRouterWalkFor(requested) {
   if (typeof requested === "string" && requested && /:free$/.test(requested)) {
     var out = [requested];
     OPENROUTER_FREE_CHAIN.forEach(function (m) {
       if (out.indexOf(m) === -1) { out.push(m); }
     });
-    /* OpenRouter rejects a models array longer than 3 items with HTTP
-       400, so cap every models array at 3, even when a requested free
-       model is prepended to the chain. */
-    return out.slice(0, 3);
+    return out;
   }
   if (typeof requested === "string" && requested) { return [requested]; }
   return OPENROUTER_FREE_CHAIN.slice();
+}
+
+/* Whether an OpenRouter failure is worth trying the next model for.
+   Rate limits, server errors, timeouts, unreachable hosts, empty
+   replies, and unknown model ids (404: the id rotated out of the
+   free roster) can all clear on the next model. Auth failures,
+   bad requests, and payment blocks cannot: they describe the key
+   or the request, not the model, so the walk stops on them. */
+function openRouterRetryable(result) {
+  if (!result) { return false; }
+  if (result.timeout || result.unreachable || result.deadline) { return true; }
+  if (result.ok) { return false; }
+  if (result.status === 429 || result.status === 404) { return true; }
+  if (result.status >= 500) { return true; }
+  if (result.status === 200) { return true; }
+  return false;
 }
 
 async function callGroq(key, model, system, user, signal) {
@@ -167,12 +192,12 @@ async function callGemini(key, model, system, user, signal) {
   return { ok: true, text: text };
 }
 
-/* One OpenRouter call carrying the whole models array. OpenRouter
-   walks the array in order on any error (rate limit, downtime,
-   moderation, context length) and reports the model that actually
-   served the request in the response model field. Only the
-   Authorization and Content-Type headers are sent. */
-async function callOpenRouter(key, models, system, user, signal) {
+/* One OpenRouter call for exactly one model. No models array is ever
+   sent: a long array in a single request was rejected live with
+   HTTP 400, so the walk below sends one model per request and moves
+   on when that model fails. Only the Authorization and Content-Type
+   headers are sent. */
+async function callOpenRouter(key, model, system, user, signal) {
   var resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -180,8 +205,7 @@ async function callOpenRouter(key, models, system, user, signal) {
       "Authorization": "Bearer " + key
     },
     body: JSON.stringify({
-      model: models[0],
-      models: models,
+      model: model,
       messages: [
         { role: "system", content: system },
         { role: "user", content: user }
@@ -199,8 +223,44 @@ async function callOpenRouter(key, models, system, user, signal) {
   if (typeof content !== "string" || content.length === 0) {
     return { ok: false, status: 200, body: "" };
   }
-  var served = (data && typeof data.model === "string" && data.model) ? data.model : models[0];
+  var served = (data && typeof data.model === "string" && data.model) ? data.model : model;
   return { ok: true, text: content, servedModel: served };
+}
+
+/* Sequential OpenRouter walk: try each model in order, one request
+   each, until one serves. Bounded twice: at most one attempt per
+   model in the list, and the runAttempt deadline guard stops the
+   walk when the function deadline approaches, so the walk can never
+   loop forever. Returns the success with its model and attempt
+   count, or the last failure with the attempt count, so the caller
+   can report honestly how many free models were tried. */
+async function walkOpenRouter(key, models, system, user, runAttempt) {
+  var last = null;
+  var attempts = 0;
+  for (var i = 0; i < models.length; i++) {
+    var model = models[i];
+    var result = await runAttempt(function (signal) {
+      return callOpenRouter(key, model, system, user, signal);
+    }, WALK_LEG_CAP_MS);
+    attempts += 1;
+    if (result.ok) {
+      return { ok: true, text: result.text, servedModel: result.servedModel, attempts: attempts };
+    }
+    last = result;
+    if (result.deadline) {
+      return { ok: false, deadline: true, attempts: attempts, last: last };
+    }
+    if (!openRouterRetryable(result)) {
+      return { ok: false, status: result.status, body: result.body, attempts: attempts, last: last };
+    }
+  }
+  if (last && last.timeout) {
+    return { ok: false, timeout: true, attempts: attempts, last: last };
+  }
+  if (last && (last.unreachable || last.deadline)) {
+    return { ok: false, unreachable: true, attempts: attempts, last: last };
+  }
+  return { ok: false, status: last ? last.status : 0, body: last ? last.body : "", attempts: attempts, last: last };
 }
 
 module.exports = async function handler(req, res) {
@@ -295,17 +355,18 @@ module.exports = async function handler(req, res) {
     return;
   }
 
-  /* OpenRouter direct: one call carrying the models array. */
+  /* OpenRouter direct: walk the requested model first, then the free
+     chain, one request per model, until one serves. A requested paid
+     model walks alone, so a paid choice stays the user's explicit
+     choice. */
   if (body.provider === "openrouter") {
     var openRouterKey = process.env.OPENROUTER_API_KEY;
     if (!openRouterKey) {
       fail(res, 500, "not_configured", "No server key is configured for this provider.");
       return;
     }
-    var directModels = openRouterModelsFor(body.model);
-    var directResult = await runAttempt(function (signal) {
-      return callOpenRouter(openRouterKey, directModels, body.system, body.user, signal);
-    });
+    var directModels = openRouterWalkFor(body.model);
+    var directResult = await walkOpenRouter(openRouterKey, directModels, body.system, body.user, runAttempt);
     if (directResult.ok) {
       send(res, 200, { ok: true, text: directResult.text, servedBy: { provider: "openrouter", model: directResult.servedModel } });
       return;
@@ -318,7 +379,7 @@ module.exports = async function handler(req, res) {
       fail(res, 502, "provider_unreachable", "The provider could not be reached.");
       return;
     }
-    send(res, 200, { ok: false, status: directResult.status, body: directResult.body });
+    send(res, 200, { ok: false, status: directResult.status, body: directResult.body, walkAttempts: directResult.attempts, walkExhausted: directResult.attempts >= directModels.length });
     return;
   }
 
@@ -335,8 +396,8 @@ module.exports = async function handler(req, res) {
   /* The fallback is completely inert when its key is unset: the Groq
      attempt keeps the full deadline, exactly as before, and no
      OpenRouter call is ever made. Only when the key exists is the
-     Groq attempt capped at 25 seconds, leaving room for the fallback
-     leg inside the same deadline. */
+     Groq attempt capped at 12 seconds, leaving room for the walk
+     legs (20 seconds each) inside the same deadline. */
   var fallbackKey = process.env.OPENROUTER_API_KEY;
   var primary = await runAttempt(function (signal) {
     return callGroq(groqKey, body.model, body.system, body.user, signal);
@@ -361,19 +422,20 @@ module.exports = async function handler(req, res) {
     send(res, 200, { ok: false, status: primary.status, body: primary.body, fallbackSkipped: "no_openrouter_key" });
     return;
   }
-  var fallback = await runAttempt(function (signal) {
-    return callOpenRouter(fallbackKey, OPENROUTER_FREE_CHAIN.slice(), body.system, body.user, signal);
-  }, ATTEMPT_TIMEOUT_MS);
+  var fallback = await walkOpenRouter(fallbackKey, OPENROUTER_FREE_CHAIN.slice(), body.system, body.user, runAttempt);
   if (fallback.ok) {
     send(res, 200, { ok: true, text: fallback.text, servedBy: { provider: "openrouter", model: fallback.servedModel } });
     return;
   }
-  /* Chain exhausted: report the primary failure, flagged, plus the
-     exact fallback status and truncated fallback body, so the page
-     can say what the fallback actually returned instead of only
-     "exhausted". When the primary had no HTTP status (timeout or
-     unreachable), report the fallback outcome instead, still
-     flagged, with the same fallback fields. */
+  /* Walk exhausted or stopped: report the primary failure, flagged,
+     plus the exact last walk status, truncated walk body, and how
+     many free models were tried, so the page can say what the walk
+     actually did instead of only "exhausted". When the primary had
+     no HTTP status (timeout or unreachable), report the walk
+     outcome instead, still flagged, with the same walk fields. */
+  var walkExhausted = fallback.attempts >= OPENROUTER_FREE_CHAIN.length;
+  var walkStatus = fallback.last ? fallback.last.status : fallback.status;
+  var walkBody = fallback.last ? fallback.last.body : fallback.body;
   if (primary.timeout || primary.unreachable || primary.deadline) {
     if (fallback.timeout) {
       fail(res, 504, "timeout", "The provider took too long to respond.");
@@ -383,16 +445,17 @@ module.exports = async function handler(req, res) {
       fail(res, 502, "provider_unreachable", "The provider could not be reached.");
       return;
     }
-    send(res, 200, { ok: false, status: fallback.status, body: fallback.body, fallbackExhausted: true, fallbackStatus: fallback.status, fallbackBody: fallback.body });
+    send(res, 200, { ok: false, status: walkStatus, body: walkBody, fallbackExhausted: walkExhausted, fallbackStatus: walkStatus, fallbackBody: walkBody, fallbackAttempts: fallback.attempts });
     return;
   }
-  send(res, 200, { ok: false, status: primary.status, body: primary.body, fallbackExhausted: true, fallbackStatus: fallback.status, fallbackBody: fallback.body });
+  send(res, 200, { ok: false, status: primary.status, body: primary.body, fallbackExhausted: walkExhausted, fallbackStatus: walkStatus, fallbackBody: walkBody, fallbackAttempts: fallback.attempts });
 };
 
-/* When a fallback leg follows, the Groq attempt is capped at 25
-   seconds inside a 55 second function deadline, under the 60 second
-   function limit. A single attempt with no fallback uses the full
-   deadline, so Groq behavior without an OpenRouter key is unchanged. */
+/* When a fallback walk follows, the Groq attempt is capped at 12
+   seconds and each walk leg at 20 seconds, inside a 55 second
+   function deadline, under the 60 second function limit. A single
+   attempt with no fallback uses the full deadline, so Groq behavior
+   without an OpenRouter key is unchanged. */
 module.exports.config = { maxDuration: 60 };
 module.exports.OPENROUTER_FREE_CHAIN = OPENROUTER_FREE_CHAIN;
 /* Test hook only: the deployed handler never calls this. It lets the
