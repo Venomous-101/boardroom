@@ -409,6 +409,10 @@ BR.renderStage = function (container, state, speakingId, rebuttal, charStates) {
     if (look) { cls += " look-" + look; }
     if (livePair && rebuttal.to && rebuttal.to.id === a.id) { cls += " addressed"; }
     if (pt.y < 50) { cls += " card-below"; }
+    /* Edge seats anchor the hover card to the seat's inner edge, so
+       the 190px card never runs past the viewport (see styles.css). */
+    if (pt.x < 25) { cls += " card-left"; }
+    else if (pt.x > 75) { cls += " card-right"; }
     var weight = state.director && state.director.weights[a.id] ? state.director.weights[a.id] : null;
     html += '<div class="round-seat" style="left:' + pt.x.toFixed(2) + '%;top:' + pt.y.toFixed(2) + '%;">';
     html += '<div class="' + cls + '" data-seat-id="' + BR.esc(a.id) + '" tabindex="0" role="button" aria-label="Focus ' + BR.esc(a.short) + '" style="' + style + '">';

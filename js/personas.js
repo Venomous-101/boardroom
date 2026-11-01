@@ -263,6 +263,11 @@ BR.PERSONAS = [
   }
 ];
 
+/* Room rules, appended to every live system prompt (persona prompts,
+   brain slices, Director, and consult). One definition, so the truth
+   and voice rules cannot drift between prompt builders. */
+BR.ROOM_RULES = "Room rules. Truth: never invent facts, metrics, clients, results, or sources. Use only facts and numbers from the brief, or label them clearly as assumptions. Separate verified facts from opinion. When something is unknown, say so instead of guessing. Never cite a source unless it appears in the brief. Voice: roast weak ideas plainly, never people. Name what is weak and why, without polite filler. No generic advice, no filler, no repeating the brief. Every line must carry a specific mechanism, number, or test.";
+
 BR.buildPersonaPrompt = function (persona) {
   var lines = [];
   lines.push("You are an AI simulation inspired by the public business frameworks associated with " + persona.name + ".");
@@ -280,6 +285,7 @@ BR.buildPersonaPrompt = function (persona) {
     lines.push("Illustration (hypothetical, not a claim about any real person): " + persona.stories[0]);
   }
   lines.push("Rules: argue from your pillar at full strength. Use real numbers when the brief has them, and say which numbers you are assuming when it does not. Do not hedge to sound balanced; the Chair balances the council, you bring your lens. Do not narrate the expert in the third person; speak as the advisor seat.");
+  lines.push(BR.ROOM_RULES);
   return lines.join("\n");
 };
 
@@ -312,6 +318,7 @@ BR.buildCustomPrompt = function (persona) {
   lines.push("Your viewpoint, in the user's own words, is: " + persona.customViewpoint);
   lines.push("Argue from that viewpoint at full strength, using it as your lens on every question.");
   lines.push("Rules: use real numbers when the brief has them, and say which numbers you are assuming when it does not. Do not hedge to sound balanced; the Chair balances the council, you bring your lens.");
+  lines.push(BR.ROOM_RULES);
   return lines.join("\n");
 };
 

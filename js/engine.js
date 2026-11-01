@@ -213,6 +213,16 @@ BR.validateOpening = function (obj, optionIds) {
   if (!ok) { return null; }
   var topId = BR.topOptionOf({ optionScores: scores }, optionIds);
   var stance = (typeof obj.stance === "string" && obj.stance.trim()) ? BR.clampText(obj.stance.trim(), 40) : BR.deriveStance(scores[topId]);
+  /* A stance label that grossly contradicts its own top score is a
+     model error, not nuance, and it misleads the room: a seat saying
+     "Strong yes" while scoring its top option below 5, or "Strong no"
+     while scoring it 6.5 or above, gets the score-derived stance. Only
+     the two extreme contradictions are corrected, so ordinary labels
+     like "Yes, if" are never overwritten. */
+  var topScore = scores[topId];
+  if ((stance === "Strong yes" && topScore < 5) || (stance === "Strong no" && topScore >= 6.5)) {
+    stance = BR.deriveStance(topScore);
+  }
   var ruin = (obj.ruinRisk === "likely" || obj.ruinRisk === "possible") ? obj.ruinRisk : "none";
   if (obj.ruinRisk && obj.ruinRisk !== "none" && obj.ruinRisk !== "possible" && obj.ruinRisk !== "likely") { ruin = "possible"; }
   var door = (obj.door === "one-way") ? "one-way" : "two-way";
@@ -801,7 +811,7 @@ BR.strongestOpposingPoint = function (state, advisorId, prevCards) {
 
 /* ---------- Step prompts ---------- */
 
-BR.directorSystem = "You are the Director (Chair) of a business advisory board. You never argue a side. You frame decisions, set weights, and structure verdicts. Plain English, short sentences. Return ONLY the JSON object requested, with no surrounding text.";
+BR.directorSystem = "You are the Director (Chair) of a business advisory board. You never argue a side. You frame decisions, set weights, and structure verdicts. Plain English, short sentences. Return ONLY the JSON object requested, with no surrounding text.\n" + BR.ROOM_RULES;
 
 BR.directorUser = function (state) {
   var lines = [];
@@ -950,7 +960,7 @@ BR.finalUser = function (state, advisor) {
   return lines.join("\n");
 };
 
-BR.consultSystem = "You are a single advisor seat on a business board, answering one question directly. Plain English, short sentences. Give a recommendation, the reasoning from your pillar, the risks, and what would change your mind. Do not score anything and do not use JSON.";
+BR.consultSystem = "You are a single advisor seat on a business board, answering one question directly. Plain English, short sentences. Give a recommendation, the reasoning from your pillar, the risks, and what would change your mind. Do not score anything and do not use JSON.\n" + BR.ROOM_RULES;
 
 BR.consultUser = function (state, advisor) {
   var lines = [];

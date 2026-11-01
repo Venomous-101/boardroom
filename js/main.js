@@ -911,6 +911,11 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 
   els.model.value = BR.PROVIDERS[els.provider.value].defaultModel;
+  /* Voice default comes from the brain module, not a second hardcoded
+     value here, so the off-by-default rule lives in exactly one place. */
+  if (els.voiceToggle && typeof BR.VOICE_ENABLED_DEFAULT !== "undefined") {
+    els.voiceToggle.checked = !!BR.VOICE_ENABLED_DEFAULT;
+  }
   populateConsultSeats();
   applyMode();
   renderHistoryList();
