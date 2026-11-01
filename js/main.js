@@ -676,7 +676,7 @@ document.addEventListener("DOMContentLoaded", function () {
     var providerId = currentConsult.provider;
     var model = currentConsult.model || BR.PROVIDERS[providerId].defaultModel;
     var consultSystem = (currentConsult.advisor.id !== "custom" && BR.slicePrompt)
-      ? BR.slicePrompt(currentConsult.advisor, "consult") + "\nAnswer as prose, in this order: your recommendation (which option, or none), why from your pillar, the biggest risk, and the one fact or number that would change your mind. Keep it under 400 words. Do not score anything and do not use JSON."
+      ? BR.slicePrompt(currentConsult.advisor, "consult") + "\nAnswer as prose, in this order: your recommendation (which option, or none), why from your pillar, the biggest risk, and the one fact or number that would change your mind. Keep it under 250 words. Do not score anything and do not use JSON."
       : BR.consultSystem;
     BR.callLLM(providerId, model, consultSystem, BR.consultUser(currentConsult, currentConsult.advisor)).then(function (res) {
       running = false;

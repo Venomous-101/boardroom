@@ -228,7 +228,7 @@ BR.slicePrompt = function (persona, stepType, target) {
     lines.push("Opening lens: " + slice.opening);
   }
   lines.push("Your voice: " + slice.voice);
-  lines.push("Rules: argue from your pillar at full strength. Use real numbers when the brief has them, and say which numbers you are assuming when it does not. Do not hedge to sound balanced; the Chair balances the council, you bring your lens. Do not narrate the expert in the third person; speak as the advisor seat. Never claim to be the person. Never quote the person verbatim. Never invent a story about anything a real person did or said.");
+  lines.push("Rules: argue from your pillar at full strength. Do not hedge to sound balanced; the Chair balances the council, you bring your lens. Speak as the advisor seat, never as the person. Never quote the person verbatim, never invent a story about anything a real person did or said.");
   lines.push(BR.ROOM_RULES);
   return lines.join("\n");
 };

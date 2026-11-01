@@ -156,6 +156,38 @@ BR.optionLabelOf = function (state, id) {
 
 /* ---------- Validation: numbers are required, labels derive from them ---------- */
 
+/* Accuracy gate: a link is invented when it looks like a URL (http,
+   https, or www) but appears nowhere in the brief. A link the user
+   pasted into the brief is allowed, because it came from the user,
+   not the model. With no brief, every link is invented. Trailing
+   sentence punctuation is stripped before comparing, so a link at
+   the end of a sentence still matches the brief copy. Bare domain
+   mentions without http or www are not checked: they are too easy
+   to confuse with ordinary words. Named sources without links stay
+   prompt-ruled, because code cannot tell a real cited name from an
+   invented one, so the room rules ban citing any source absent from
+   the brief. */
+BR.containsInventedLink = function (text, brief) {
+  if (!text || typeof text !== "string") { return false; }
+  var links = text.match(/https?:\/\/\S+|www\.\S+/g);
+  if (!links) { return false; }
+  var source = brief || "";
+  for (var i = 0; i < links.length; i++) {
+    var clean = links[i].replace(/[),.\]}'"]+$/, "");
+    if (source.indexOf(clean) === -1) { return true; }
+  }
+  return false;
+};
+
+/* True when any text field of a validated card carries an invented
+   link. applyStepResult calls this on every validated card before
+   storing it, so a card with an invented source is retried by the
+   step executor, never displayed. */
+BR.hasInventedLinkIn = function (obj, brief) {
+  if (!obj || typeof obj !== "object") { return false; }
+  return BR.containsInventedLink(JSON.stringify(obj), brief);
+};
+
 BR.validateDirector = function (obj, advisorIds) {
   if (!obj || typeof obj !== "object") { return null; }
   if (typeof obj.brief !== "string" || obj.brief.trim().length === 0) { return null; }
@@ -829,10 +861,10 @@ BR.directorUser = function (state) {
   });
   lines.push(BR.FOCUS_LINES[state.focus] || BR.FOCUS_LINES.balanced);
   lines.push("Return ONLY this JSON object, nothing else:");
-  lines.push('{"brief": "under 120 words framing the decision, options, and what is at stake",');
+  lines.push('{"brief": "under 120 words framing the decision, options, what is at stake, and the single riskiest assumption",');
   lines.push('"weights": [{"advisorId": "id", "weight": 1-3, "reason": "one line"}],');
   lines.push('"cruxes": [{"question": "one underlying disagreement, under 140 chars", "sides": [{"position": "short", "seats": ["Short names"]}]}],');
-  lines.push('"assumptions": ["anything you assumed, or empty"]}');
+  lines.push('"assumptions": ["assumptions ranked riskiest first, or empty"]}');
   lines.push("Rules: give exactly one or two advisors weight 3, the rest 1 or 2. List 1 to 3 cruxes. Every advisor id above must appear in weights exactly once.");
   return lines.join("\n");
 };
@@ -874,7 +906,7 @@ BR.debateUser = function (state, advisor, prevCards, roundNumber) {
   }
   lines.push(BR.FOCUS_LINES[state.focus] || BR.FOCUS_LINES.balanced);
   lines.push("This is debate round " + roundNumber + ". Return ONLY this JSON object, nothing else:");
-  lines.push('{"headline": "one line, your sharpest point", "disagreeWith": "short name of the seat you disagree with most", "rebuttal": "your rebuttal, under 80 words",');
+  lines.push('{"headline": "one line, your sharpest point", "disagreeWith": "short name of the seat you disagree with most", "rebuttal": "your rebuttal, under 80 words, naming the trade-off your position accepts",');
   lines.push('"concede": "the strongest point against you and what it changes", "cruxAnswers": ["one or two lines per crux"],');
   lines.push('"stance": "Strong yes | Yes | Yes, if | No | Strong no",');
   lines.push('"reason": "one line, under 60 words, your core argument for your recommended option",');
@@ -912,7 +944,7 @@ BR.discussionUser = function (state, advisor, target, targetCard) {
   lines.push('"steelman": "the target point at its strongest, in your own words, at least 20 characters",');
   lines.push('"pointAnswered": "the target point in short label form",');
   lines.push('"weakPoint": "the weakest premise in that point, stated plainly",');
-  lines.push('"reply": "your attack on that premise, under 80 words",');
+  lines.push('"reply": "your attack on that premise, under 80 words, naming the trade-off your position accepts",');
   lines.push('"concede": "exactly what you concede, or nothing and why",');
   lines.push('"costOfBeingWrong": "what it costs if your reply is wrong",');
   lines.push('"evidenceDemanded": "the one fact or number that would settle it",');
@@ -1043,6 +1075,7 @@ BR.applyStepResult = function (state, step, parsed) {
   if (step.key === "director") {
     var d = BR.validateDirector(parsed, advisorIds);
     if (!d) { return { ok: false }; }
+    if (BR.hasInventedLinkIn(d, state.context)) { return { ok: false }; }
     state.director = d;
     state.transcript.push({ kind: "director", speaker: "Director", title: "Brief", body: d.brief });
     return { ok: true };
@@ -1050,6 +1083,7 @@ BR.applyStepResult = function (state, step, parsed) {
   if (step.key.indexOf("opening:") === 0) {
     var o = BR.validateOpening(parsed, optionIds);
     if (!o) { return { ok: false }; }
+    if (BR.hasInventedLinkIn(o, state.context)) { return { ok: false }; }
     state.opening[step.advisorId] = o;
     var adv = BR.advisorById(state, step.advisorId);
     state.transcript.push({ kind: "vote", speaker: adv ? adv.short : step.advisorId, title: "Opening vote", headline: o.headline || "", body: o.stance + " on option " + o.recommendedId + ". " + o.reason });
@@ -1058,6 +1092,7 @@ BR.applyStepResult = function (state, step, parsed) {
   if (step.key.indexOf("debate:") === 0) {
     var db = BR.validateDebate(parsed, optionIds);
     if (!db) { return { ok: false }; }
+    if (BR.hasInventedLinkIn(db, state.context)) { return { ok: false }; }
     var round = state.debateRounds[step.round - 1];
     if (!round) { round = { round: step.round, cards: {} }; state.debateRounds[step.round - 1] = round; }
     round.cards[step.advisorId] = db;
@@ -1068,6 +1103,7 @@ BR.applyStepResult = function (state, step, parsed) {
   if (step.key.indexOf("discussion:") === 0) {
     var dc = BR.validateDiscussion(parsed);
     if (!dc) { return { ok: false }; }
+    if (BR.hasInventedLinkIn(dc, state.context)) { return { ok: false }; }
     /* Resolve the answer target to a real seat before anything is
        stored or rendered, so a topic label in model output can never
        reach the transcript as if it were a seat. */
@@ -1087,6 +1123,7 @@ BR.applyStepResult = function (state, step, parsed) {
     var rec = BR.pickRecommended(state, scores);
     var dr = BR.validateDraft(parsed);
     if (!dr) { return { ok: false }; }
+    if (BR.hasInventedLinkIn(dr, state.context)) { return { ok: false }; }
     state.draft = dr;
     state.verdictDraftId = rec;
     state.transcript.push({ kind: "draft", speaker: "Director", title: "Draft resolution", body: "Recommend option " + rec + " " + BR.optionLabelOf(state, rec) + ". Cheapest test: " + dr.cheapestTest });
@@ -1095,6 +1132,7 @@ BR.applyStepResult = function (state, step, parsed) {
   if (step.key.indexOf("final:") === 0) {
     var f = BR.validateFinal(parsed);
     if (!f) { return { ok: false }; }
+    if (BR.hasInventedLinkIn(f, state.context)) { return { ok: false }; }
     state.final[step.advisorId] = f;
     var adv3 = BR.advisorById(state, step.advisorId);
     state.transcript.push({ kind: "final", speaker: adv3 ? adv3.short : step.advisorId, title: "Final vote", body: f.vote + " (" + f.finalScore + "/10). " + (f.amendment || f.line) });

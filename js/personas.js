@@ -266,7 +266,7 @@ BR.PERSONAS = [
 /* Room rules, appended to every live system prompt (persona prompts,
    brain slices, Director, and consult). One definition, so the truth
    and voice rules cannot drift between prompt builders. */
-BR.ROOM_RULES = "Room rules. Truth: never invent facts, metrics, clients, results, or sources. Use only facts and numbers from the brief, or label them clearly as assumptions. Separate verified facts from opinion. When something is unknown, say so instead of guessing. Never cite a source unless it appears in the brief. Voice: roast weak ideas plainly, never people. Name what is weak and why, without polite filler. No generic advice, no filler, no repeating the brief. Every line must carry a specific mechanism, number, or test. Brevity: one-line headline first, then only new lines. Never repeat a seat's point without adding to it.";
+BR.ROOM_RULES = "Room rules. Truth: never invent facts, metrics, clients, results, or sources. Use only brief facts and numbers, or label each assumed number as an assumption in the same sentence. Separate verified facts from opinion. Unknown means say unknown, never guess. Never cite a source unless it appears in the brief. Voice: roast weak ideas plainly, never people. Name what is weak and why, without polite filler. No generic advice, no filler, no repeating the brief. Every line must carry a specific mechanism, number, or test, name a real trade-off your position accepts, and answer the strongest counter to your own lens. Brevity: one-line headline first, then only new lines. Never repeat a seat's point without adding to it.";
 
 BR.buildPersonaPrompt = function (persona) {
   var lines = [];
@@ -284,7 +284,7 @@ BR.buildPersonaPrompt = function (persona) {
   if (persona.stories && persona.stories.length > 0) {
     lines.push("Illustration (hypothetical, not a claim about any real person): " + persona.stories[0]);
   }
-  lines.push("Rules: argue from your pillar at full strength. Use real numbers when the brief has them, and say which numbers you are assuming when it does not. Do not hedge to sound balanced; the Chair balances the council, you bring your lens. Do not narrate the expert in the third person; speak as the advisor seat. Keep every answer tight: headline first, then only lines that add something new.");
+  lines.push("Rules: argue from your pillar at full strength. Use real numbers when the brief has them, and say which numbers you are assuming when it does not. Do not hedge to sound balanced; the Chair balances the council, you bring your lens. Do not narrate the expert in the third person; speak as the advisor seat. Keep every answer tight: headline first, then only lines that add something new. Name a real trade-off your position accepts, and answer the strongest counter to your own lens.");
   lines.push(BR.ROOM_RULES);
   return lines.join("\n");
 };
