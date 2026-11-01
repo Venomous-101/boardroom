@@ -658,11 +658,11 @@ async function main() {
   /* ---------- Integration: brain slices, discussion, playback ---------- */
   assert("slices exist for all eight seats",
     BR.PERSONAS.every(function (p) { return !!BR.BRAIN_SLICES[p.id]; }));
-  assert("slice prompts stay lean (150 to 430 words) for every seat and step",
+  assert("slice prompts stay lean (150 to 530 words) for every seat and step",
     BR.PERSONAS.every(function (p) {
       return ["opening", "debate", "discussion", "final", "consult"].every(function (s) {
         var n = BR.sliceWordCount(p, s, BR.PERSONAS[1]);
-        return n >= 150 && n <= 430;
+        return n >= 150 && n <= 530;
       });
     }));
   assert("debate slices carry an edge and final slices carry a steelman",
@@ -775,28 +775,66 @@ async function main() {
       var vec = BR.leanVectorFor(0, 2, 8);
       return Math.abs(top.x - 50) < 0.01 && top.y < 14 && right.x > 90 && vec && vec.dx > 0 && vec.dy > 0;
     })());
-  assert("stage seats fit the stage box at the seat-centre half-block measure and the bottom margin clears the strip",
+  assert("round table geometry: no seat overlaps another seat or the centre table, at 8 or 9 seats, at any round-layout width",
     (function () {
-      /* Seat centres run from 13 percent (top) to 87 percent (bottom)
-         at the 37 percent y radius. The half-block measure here is
-         72px, half the 144px seat width, against the 560px stage
-         height, about 12.86 percent: 87 + 12.86 stays under 100. The
-         full seat block is taller, about 205px, so its bottom edge
-         still extends about 30px past the 560px box; the 120px bottom
-         margin on .stage-round is what pushes the rebuttal strip and
-         the stage note below that edge. Both halves are asserted so
-         neither the radius nor the margin can silently regress. */
+      /* Full seat rectangles, not centres: seats are 144px wide and
+         up to 237px tall (two-line role). The stage height is read
+         from the live CSS, so a height regression fails here instead
+         of silently reintroducing overlap. Widths are stage content
+         widths: 661px is the narrowest round layout (701px viewport
+         minus main padding, just above the 700px grid fallback) and
+         1040px is the widest (1080px main minus padding). The centre
+         table is min(46 percent, 420px) wide above the 900px
+         breakpoint and min(48 percent, 420px) at or below it, with
+         aspect ratio 1.6. The top seat may rise at most 26px above
+         the stage (the h2 plus stage margins above it) and the
+         bottom seat may extend at most 120px below it (the stage
+         bottom margin). The tightest pair is the 9-seat side pair
+         with a 1.4px horizontal gap at 661px, inside seat padding,
+         never over text. The pair check runs twice: once static, and
+         once with the lower seat lifted 22px, the speaking peak, so
+         a speaking seat never rises into its upper neighbour. */
       var css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
-      var marginOk = css.indexOf("margin: 12px 0 120px") !== -1;
-      function fits(total) {
-        for (var i = 0; i < total; i++) {
-          var pt = BR.seatPointFor(i, total);
-          if (pt.y < 13 - 0.01 || pt.y > 87 + 0.01) { return false; }
-          if (pt.y + (72 / 560) * 100 > 100) { return false; }
-        }
-        return true;
+      var m = /\.stage-round\s*\{[^}]*min-height:\s*(\d+)px/.exec(css);
+      if (!m) { return false; }
+      var stageH = parseInt(m[1], 10);
+      if (css.indexOf("margin: 12px 0 120px") === -1) { return false; }
+      var seatW = 144, seatH = 237;
+      function overlaps(a, b) {
+        return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
       }
-      return marginOk && fits(8) && fits(9);
+      var widths = [661, 701, 760, 850, 900, 901, 1000, 1040];
+      var totals = [8, 9];
+      for (var wi = 0; wi < widths.length; wi++) {
+        var stageW = widths[wi];
+        var tableW = stageW <= 900 ? Math.min(0.48 * stageW, 420) : Math.min(0.46 * stageW, 420);
+        var tableH = tableW / 1.6;
+        var table = { left: stageW / 2 - tableW / 2, right: stageW / 2 + tableW / 2,
+          top: stageH / 2 - tableH / 2, bottom: stageH / 2 + tableH / 2 };
+        for (var ti = 0; ti < totals.length; ti++) {
+          var rects = [];
+          for (var i = 0; i < totals[ti]; i++) {
+            var pt = BR.seatPointFor(i, totals[ti]);
+            var r = { left: pt.x / 100 * stageW - seatW / 2, right: pt.x / 100 * stageW + seatW / 2,
+              top: pt.y / 100 * stageH - seatH / 2, bottom: pt.y / 100 * stageH + seatH / 2 };
+            if (r.top < -26 || r.bottom > stageH + 120) { return false; }
+            if (overlaps(r, table)) { return false; }
+            rects.push(r);
+          }
+          for (var a = 0; a < rects.length; a++) {
+            for (var b = a + 1; b < rects.length; b++) {
+              if (overlaps(rects[a], rects[b])) { return false; }
+              /* Speaking lift: the lower seat rises 22px toward the
+                 upper seat at the animation peak. */
+              var lower = rects[a].top > rects[b].top ? rects[a] : rects[b];
+              var upper = lower === rects[a] ? rects[b] : rects[a];
+              var lifted = { left: lower.left, right: lower.right, top: lower.top - 22, bottom: lower.bottom - 22 };
+              if (overlaps(lifted, upper)) { return false; }
+            }
+          }
+        }
+      }
+      return true;
     })());
   assert("resume skips completed steps and reports a completed debate as done",
     (function () {
@@ -1026,6 +1064,130 @@ async function main() {
       const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
       return html.indexOf('id="resume-panel"') !== -1 && html.indexOf('id="resume-debate"') !== -1 &&
         html.indexOf('id="resume-discard"') !== -1;
+    })());
+
+  /* ---------- Room rules, distinct brains, honesty labels, hard constraints ---------- */
+  assert("room rules reach every live system prompt",
+    (function () {
+      var rules = BR.ROOM_RULES || "";
+      if (rules.indexOf("never invent facts") === -1 || rules.indexOf("roast weak ideas plainly") === -1) { return false; }
+      var slicesOk = BR.PERSONAS.every(function (p) {
+        return ["opening", "debate", "discussion", "final", "consult"].every(function (s) {
+          return BR.slicePrompt(p, s, BR.PERSONAS[1]).indexOf(rules) !== -1;
+        });
+      });
+      var personaOk = BR.PERSONAS.every(function (p) { return BR.buildPersonaPrompt(p).indexOf(rules) !== -1; });
+      var customOk = BR.buildCustomPrompt(BR.buildCustomPersona("Test", "View.")).indexOf(rules) !== -1;
+      return slicesOk && personaOk && customOk &&
+        BR.directorSystem.indexOf(rules) !== -1 && BR.consultSystem.indexOf(rules) !== -1;
+    })());
+  assert("page loads the brain module and carries the exact footer credit and simulation labels",
+    (function () {
+      const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+      return html.indexOf('<script src="js/brains.js"></script>') !== -1 &&
+        html.indexOf("Inspired by Nate Herk's Roast Room (open-source); built independently, not affiliated with Nate Herk.") !== -1 &&
+        html.indexOf("AI simulation") !== -1;
+    })());
+  assert("council is exactly 8 seats with distinct voices, distinct lenses, and full disagreement coverage",
+    (function () {
+      if (BR.PERSONAS.length !== 8) { return false; }
+      function distinct(values) {
+        var seen = {};
+        for (var i = 0; i < values.length; i++) {
+          if (!values[i] || seen[values[i]]) { return false; }
+          seen[values[i]] = true;
+        }
+        return true;
+      }
+      if (!distinct(BR.PERSONAS.map(function (p) { return p.voice; }))) { return false; }
+      if (!distinct(BR.PERSONAS.map(function (p) { return BR.BRAIN_SLICES[p.id] && BR.BRAIN_SLICES[p.id].hot; }))) { return false; }
+      return BR.PERSONAS.every(function (p) {
+        var slice = BR.BRAIN_SLICES[p.id];
+        if (!slice || !slice.disagreements) { return false; }
+        return BR.PERSONAS.every(function (q) {
+          return q.id === p.id || (typeof slice.disagreements[q.id] === "string" && slice.disagreements[q.id].length > 0);
+        });
+      });
+    })());
+  assert("slice prompts differ between seats on every step, so no two seats sound the same",
+    (function () {
+      var steps = ["opening", "debate", "discussion", "final", "consult"];
+      return steps.every(function (s) {
+        var seen = {};
+        return BR.PERSONAS.every(function (p) {
+          var text = BR.slicePrompt(p, s, BR.PERSONAS[1]);
+          if (seen[text]) { return false; }
+          seen[text] = true;
+          return true;
+        });
+      });
+    })());
+  assert("stance labels that grossly contradict their top score are corrected to the score-derived stance",
+    (function () {
+      var yes = BR.validateOpening({ stance: "Strong yes", optionScores: { A: 4, B: 3, C: 2 }, pillarScore: 5, confidence: 4, ruinRisk: "none", door: "two-way", reason: "R.", changeMind: "N." }, ["A", "B", "C"]);
+      var no = BR.validateOpening({ stance: "Strong no", optionScores: { A: 8, B: 6, C: 3 }, pillarScore: 5, confidence: 4, ruinRisk: "none", door: "two-way", reason: "R.", changeMind: "N." }, ["A", "B", "C"]);
+      var mild = BR.validateOpening({ stance: "Yes, if", optionScores: { A: 6, B: 5, C: 3 }, pillarScore: 5, confidence: 4, ruinRisk: "none", door: "two-way", reason: "R.", changeMind: "N." }, ["A", "B", "C"]);
+      return yes && yes.stance !== "Strong yes" && no && no.stance !== "Strong no" && mild && mild.stance === "Yes, if";
+    })());
+  assert("palette, edge seat cards, and grid card rules are present in CSS",
+    (function () {
+      const css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
+      return css.indexOf("#0f1419") !== -1 && css.indexOf("#171e26") !== -1 && css.indexOf("#e8a33d") !== -1 &&
+        css.indexOf(".stage-seat.card-left .seat-card") !== -1 && css.indexOf(".stage-seat.card-right .seat-card") !== -1 &&
+        css.indexOf("@media (max-width: 700px)") !== -1;
+    })());
+  assert("rendered stage marks edge seats for inner-edge cards",
+    (function () {
+      var s = makeDebate(1);
+      var c = { innerHTML: "" };
+      BR.renderStage(c, s, null, null);
+      return c.innerHTML.indexOf("card-left") !== -1 && c.innerHTML.indexOf("card-right") !== -1;
+    })());
+  assert("no em dashes anywhere in the shipped app files",
+    (function () {
+      var files = ["index.html", "styles.css", "js/personas.js", "js/providers.js", "js/brains.js", "js/engine.js", "js/ui.js", "js/main.js", "api/chat.js", "README.md"];
+      return files.every(function (f) {
+        return fs.readFileSync(path.join(root, f), "utf8").indexOf("\u2014") === -1;
+      });
+    })());
+  assert("every CSS class is used by the page or the renderers, so no dead rules ship",
+    (function () {
+      var css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
+      var html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+      var js = ["js/personas.js", "js/providers.js", "js/brains.js", "js/engine.js", "js/ui.js", "js/main.js"]
+        .map(function (f) { return fs.readFileSync(path.join(root, f), "utf8"); }).join("\n");
+      var hay = html + "\n" + js;
+      var classes = {};
+      css.replace(/\.([A-Za-z][A-Za-z0-9_-]*)/g, function (m, name) { classes[name] = true; return m; });
+      /* Classes built dynamically in JS: state-<state>, react-<nod|shake>,
+         look-<left|right>. Everything else must appear literally. */
+      var unused = Object.keys(classes).filter(function (name) {
+        if (name.indexOf("state-") === 0 || name.indexOf("react-") === 0 || name.indexOf("look-") === 0) { return false; }
+        var re = new RegExp("(^|[\\s\"'`])" + name.replace(/-/g, "\\-") + "(?![-\\w])");
+        return !re.test(hay);
+      });
+      return unused.length === 0;
+    })());
+  assert("body text, muted text, and white-on-badge pairs meet WCAG AA contrast",
+    (function () {
+      function lum(hex) {
+        var r = parseInt(hex.slice(1, 3), 16) / 255, g = parseInt(hex.slice(3, 5), 16) / 255, b = parseInt(hex.slice(5, 7), 16) / 255;
+        function f(c) { return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
+        return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+      }
+      function ratio(fg, bg) {
+        var l1 = lum(fg), l2 = lum(bg);
+        return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+      }
+      var pairs = [["#e8ecf1", "#0f1419"], ["#e8ecf1", "#171e26"], ["#9aa7b4", "#171e26"], ["#14100a", "#e8a33d"]];
+      var css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
+      var badgeRe = /\.vote-badge\.([A-Za-z-]+)\s*\{[^}]*background:\s*(#[0-9a-f]{6})/g;
+      var badgeMatch = badgeRe.exec(css);
+      while (badgeMatch) {
+        pairs.push(["#ffffff", badgeMatch[2]]);
+        badgeMatch = badgeRe.exec(css);
+      }
+      return pairs.every(function (p) { return ratio(p[0], p[1]) >= 4.5; });
     })());
 
   /* ---------- Key points verdict branch shows the final vote ---------- */
