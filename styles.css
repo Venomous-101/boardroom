@@ -141,13 +141,14 @@ button:disabled { opacity: 0.55; cursor: default; }
    seat and shows its card. Click a seat to focus its transcript
    entries and key points. The centre table carries the decision
    title and the current speaker, never a vote. */
-/* Round table geometry. Seats are 144px wide and up to 237px tall
-   (two-line role). With 8 seats the tightest vertical gap is 26.2
-   percent of the stage height, needing at least 905px. With a custom
+/* Round table geometry. Seats are 144px wide and up to 261px tall
+   (120px full-body figure plus name, state, two-line role, and
+   status). With 8 seats the tightest vertical gap is 26.2
+   percent of the stage height, needing at least 995px. With a custom
    advisor the table holds 9 seats, and the tightest vertical gap
-   shrinks to 21.92 percent, needing at least 1081px (237 / 0.2192).
-   The speaking lift adds 22px, so the gap must clear 259px, needing
-   at least 1182px (259 / 0.2192). 1200px covers both totals with
+   shrinks to 21.92 percent, needing at least 1191px (261 / 0.2192).
+   The speaking lift adds 22px, so the gap must clear 283px, needing
+   at least 1291px (283 / 0.2192). 1350px covers both totals with
    margin, keeps the top seat inside the stage even mid-lift, and
    keeps the bottom seat inside the 120px margin below the stage.
    The test harness re-derives this from the live CSS value, so
@@ -155,7 +156,7 @@ button:disabled { opacity: 0.55; cursor: default; }
    suite. */
 .stage-round {
   position: relative;
-  min-height: 1200px;
+  min-height: 1350px;
   margin: 12px 0 120px;
 }
 .round-seat {
@@ -249,7 +250,7 @@ button:disabled { opacity: 0.55; cursor: default; }
 .seat-card strong { display: block; font-size: 14px; }
 .seat-card span { display: block; color: #9aa7b4; font-size: 12px; margin-top: 4px; }
 
-/* Vote stamp overlaid on a bust after the final vote. The wrapper
+/* Vote stamp overlaid on a figure after the final vote. The wrapper
    also carries look, reaction, and ponder motion, so its transition
    lives here, once, not in a second rule below. */
 .thumb-wrap { position: relative; display: inline-block; transition: transform 180ms ease; }
@@ -278,48 +279,53 @@ button:disabled { opacity: 0.55; cursor: default; }
    entry reads at a glance, not only on close inspection. */
 .tx-entry.focused, .kp-item.focused { outline: 2px solid #e8a33d; background: #1f2a36; }
 
-/* Animated SVG character figure: a bust in a circle crop.
-   Stage figures are 96px; transcript and key-point figures are
-   40px. The head group turns (listening, facing a target), the
-   eyes blink on a per-seat delay so the room never blinks in
-   unison, the mouth sits on the face inside the SVG so it can
-   never float off it, and one arm gestures. Idle figures breathe;
-   speaking figures pulse a seat-color ring. SVG part transforms
-   need transform-box: fill-box, or rotations would pivot around
-   the whole SVG instead of the part. */
+/* Animated SVG character figure: a full cartoon body, head to
+   shoes, in the seat color. Stage figures are 72 by 120px;
+   transcript and key-point figures are 30 by 50px. The head group
+   turns (listening, facing a target), the whole figure tilts a few
+   degrees with the look so the body reads as turned, not just the
+   head, the eyes blink on a per-seat delay so the room never blinks
+   in unison, the mouth sits on the face inside the SVG so it can
+   never float off it, and the front arm gestures. Idle figures
+   breathe on the inner SVG, so the breathe never fights the look
+   tilt on the figure wrapper; speaking figures pulse a seat-color
+   ring. SVG part transforms need transform-box: fill-box, or
+   rotations would pivot around the whole SVG instead of the part. */
 .char-figure {
   position: relative; display: inline-block;
-  width: 40px; height: 40px; min-width: 40px;
-  border-radius: 50%; overflow: hidden; vertical-align: middle;
+  width: 30px; height: 50px; min-width: 30px;
+  vertical-align: middle;
+  transition: transform 300ms ease;
 }
-.char-figure.large { width: 96px; height: 96px; min-width: 96px; }
+.char-figure.large { width: 72px; height: 120px; min-width: 72px; }
 .char-svg { display: block; width: 100%; height: 100%; }
 .char-initials {
   display: flex; width: 100%; height: 100%;
   align-items: center; justify-content: center;
-  font-weight: 800; font-size: 15px; color: #101418;
+  font-weight: 800; font-size: 13px; color: #101418;
+  border-radius: 10px;
 }
-.char-figure.large .char-initials { font-size: 28px; }
-.char-figure.idle { animation: charbreathe 4s ease-in-out infinite; }
+.char-figure.large .char-initials { font-size: 24px; }
+.char-figure.idle .char-svg { animation: charbreathe 4s ease-in-out infinite; }
 @keyframes charbreathe {
   0%, 100% { transform: scale(1); }
   50% { transform: scale(1.02); }
 }
 .char-figure.talking::after {
-  content: ""; position: absolute; inset: -4px; z-index: 1;
-  border-radius: 50%; border: 2px solid var(--seat-color, #e8a33d);
+  content: ""; position: absolute; inset: -6px; z-index: 1;
+  border-radius: 20px; border: 2px solid var(--seat-color, #e8a33d);
   animation: pulse-ring 1.6s ease-out infinite;
 }
 @keyframes pulse-ring {
   0% { transform: scale(0.95); opacity: 0.8; }
   100% { transform: scale(1.25); opacity: 0; }
 }
-.char-head, .char-eyes, .char-mouth, .char-arm {
+.char-head, .char-eyes, .char-mouth, .char-arm, .char-arm-g {
   transform-box: fill-box;
   transform-origin: center;
 }
 .char-head { transition: transform 300ms ease; }
-.char-arm { transform-origin: top center; }
+.char-arm, .char-arm-g { transform-origin: top center; }
 /* Blink: eyes close for a beat near the end of each 4.6s cycle,
    staggered per seat by --blink-delay, set by the renderer. */
 .char-eyes { animation: charblink 4.6s infinite; animation-delay: var(--blink-delay, 0s); }
@@ -329,8 +335,8 @@ button:disabled { opacity: 0.55; cursor: default; }
 }
 /* Speaking playback: the mouth moves with the spoken word, not
    lip-sync. Size changes use transform only, never height, so the
-   bar never reflows. At 96px a fully open mouth is unmistakable
-   at normal viewing distance. */
+   bar never reflows. At 120px tall a fully open mouth is
+   unmistakable at normal viewing distance. */
 .char-mouth { transform: scaleY(0.15); transition: transform 100ms ease; }
 .char-figure.char-mouth-closed .char-mouth { transform: scaleY(0.15); }
 .char-figure.char-mouth-mid .char-mouth { transform: scaleY(0.6); }
@@ -343,7 +349,7 @@ body:not(.gsap-on) .stage-seat.speaking .char-head { animation: charheadtilt 1.4
   0%, 100% { transform: rotate(-8deg); }
   50% { transform: rotate(8deg); }
 }
-body:not(.gsap-on) .stage-seat.speaking .char-arm { animation: chargesture 1.8s ease-in-out infinite; }
+body:not(.gsap-on) .stage-seat.speaking .char-arm-g { animation: chargesture 1.8s ease-in-out infinite; }
 @keyframes chargesture {
   0%, 100% { transform: rotate(0deg); }
   50% { transform: rotate(-32deg); }
@@ -387,6 +393,13 @@ body:not(.gsap-on) .stage-seat.speaking .char-arm { animation: chargesture 1.8s 
    driven only by the addressed seat's vote or card data. */
 .stage-seat.look-left .char-head { transform: rotate(-14deg) translateX(-3px); }
 .stage-seat.look-right .char-head { transform: rotate(14deg) translateX(3px); }
+/* Whole-body turn: the figure tilts with the look, so a listening
+   seat turns its body toward the live seat and a speaking seat
+   turns its body toward its target, not just its head. The tilt
+   lives on the figure wrapper, the head turn on the head group, so
+   the two compose instead of fighting. */
+.stage-seat.look-left .char-figure { transform: rotate(-5deg); }
+.stage-seat.look-right .char-figure { transform: rotate(5deg); }
 .stage-seat.state-thinking .char-head { transform: rotate(12deg); }
 .thumb-wrap.react-nod { animation: nod 1.4s ease-in-out; }
 .thumb-wrap.react-shake { animation: shake 1.4s ease-in-out; }
@@ -422,16 +435,17 @@ body:not(.gsap-on) .stage-seat.speaking .char-arm { animation: chargesture 1.8s 
 
 @media (prefers-reduced-motion: reduce) {
   .stage-seat.speaking, .stage-seat.playing { animation: none; }
-  .char-figure.idle { animation: none; }
+  .char-figure.idle .char-svg { animation: none; }
   .char-figure.talking { animation: none; }
   .char-figure.talking::after { animation: none; }
   .char-mouth { transition: none; }
   .char-eyes { animation: none; }
   .char-head { transition: none; animation: none; }
-  .char-arm { animation: none; }
+  .char-arm, .char-arm-g { animation: none; }
   .thumb-wrap.react-nod, .thumb-wrap.react-shake { animation: none; }
   .stage-seat.state-thinking .thumb-wrap { animation: none; }
   .stage-seat.look-left .char-head, .stage-seat.look-right .char-head { transform: none; }
+  .stage-seat.look-left .char-figure, .stage-seat.look-right .char-figure { transform: none; }
   .stage-seat.lean-toward, .stage-seat.playing-lean { translate: 0 0; }
   .stage-seat:hover { transform: none; }
   .stage-seat, .thumb-wrap { transition: none; }
@@ -476,6 +490,18 @@ body:not(.gsap-on) .stage-seat.speaking .char-arm { animation: chargesture 1.8s 
 .tx-content { min-width: 0; flex: 1; }
 .tx-director { background: #1a222c; border-left: 4px solid #e8a33d; }
 .tx-rebuts { overflow-wrap: anywhere; color: #9aa7b4; font-size: 13px; margin-top: 4px; }
+/* Sharp transcript view: headline first, then up to two supporting
+   sentences. The full text and extra lines sit behind one quiet
+   expand control, never hidden without one. */
+.tx-headline { font-weight: 800; font-size: 16px; overflow-wrap: break-word; }
+.tx-excerpt { font-size: 16px; max-width: 72ch; overflow-wrap: anywhere; margin-top: 4px; }
+.tx-full { margin-top: 8px; }
+.tx-expand {
+  background: none; border: none; cursor: pointer;
+  color: #e8a33d; font-size: 13px; font-weight: 700;
+  padding: 6px 0 0; margin-top: 6px;
+}
+.tx-expand:hover { text-decoration: underline; }
 .tx-thinking { display: flex; gap: 12px; align-items: center; color: #c6d0da; font-size: 14px; }
 .tx-thinking .thinking { margin-top: 0; margin-left: 6px; }
 
@@ -493,23 +519,9 @@ body:not(.gsap-on) .stage-seat.speaking .char-arm { animation: chargesture 1.8s 
 .kp-weight { color: #9aa7b4; font-size: 12px; text-align: right; flex: none; }
 .kp-line { margin-top: 6px; overflow-wrap: break-word; }
 
-/* Tables scroll inside their panel on narrow screens instead of
-   pushing the whole page sideways. */
-.table-scroll { overflow-x: auto; }
-.table-scroll table { min-width: 520px; }
-.kp-meta { color: #9aa7b4; font-size: 12px; margin-top: 4px; }
 .kp-weight-reason { color: #9aa7b4; font-size: 12px; margin-top: 2px; }
 .kp-reason { font-size: 14px; margin-top: 4px; overflow-wrap: break-word; }
-
-/* Tables in full-width panels. Headers never break inside a word:
-   the Key points verdict table used to squeeze headers like Seat,
-   Weight, and Pillar into letter-by-letter stacks, because cells
-   were allowed to break anywhere. Headers now stay whole (they wrap
-   between words only), cells break only long unbreakable tokens,
-   and the scroll wrapper keeps a readable minimum width. */
-.weights-table, .score-table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
-.weights-table th, .weights-table td, .score-table th, .score-table td { border: 1px solid #2a3441; padding: 8px 10px; text-align: left; overflow-wrap: break-word; }
-.weights-table th, .score-table th { background: #1a222c; white-space: nowrap; }
+.weights-line { font-size: 14px; color: #c6d0da; overflow-wrap: break-word; }
 
 /* Draft resolution panel. */
 .draft-rec { font-size: 18px; font-weight: 700; }
@@ -542,13 +554,24 @@ details summary { cursor: pointer; font-weight: 700; margin: 16px 0 8px; }
 
 .math-lines { color: #c6d0da; font-size: 14px; margin: 8px 0 20px; }
 
+.verdict-sheet h3 { margin: 24px 0 8px; }
 .verdict-label {
   display: inline-block;
   background: #e8a33d; color: #14100a;
-  font-size: 22px; font-weight: 900; letter-spacing: 0.5px;
-  border-radius: 8px; padding: 8px 16px; margin: 8px 0;
+  font-size: 26px; font-weight: 900; letter-spacing: 0.5px;
+  border-radius: 8px; padding: 10px 18px; margin: 12px 0;
 }
-.verdict-call { font-size: 18px; font-weight: 600; }
+.verdict-call { font-size: 20px; font-weight: 600; margin: 8px 0 4px; }
+.verdict-reasons { margin: 8px 0 4px; padding-left: 20px; }
+.verdict-reasons li { margin: 8px 0; line-height: 1.5; }
+.verdict-seats { margin: 8px 0 4px; }
+.verdict-seat {
+  padding: 10px 0; line-height: 1.5;
+  border-bottom: 1px solid #2a3441; overflow-wrap: break-word;
+}
+.verdict-seat:last-child { border-bottom: none; }
+.verdict-seat .vote-badge { font-size: 11px; }
+.verdict-seat-line { color: #e8ecf1; }
 .verdict-stats { display: flex; flex-wrap: wrap; gap: 8px 20px; color: #c6d0da; font-size: 14px; margin: 8px 0 16px; }
 .overrides { background: #2a1f14; border: 1px solid #6b4e1e; border-radius: 8px; padding: 10px 14px; font-size: 14px; margin: 12px 0; }
 
@@ -583,8 +606,8 @@ footer {
   .topbar h1 { font-size: 28px; }
   .panel { padding: 16px; }
   .stage-seat { width: 104px; }
-  .char-figure.large { width: 72px; height: 72px; min-width: 72px; }
-  .char-figure.large .char-initials { font-size: 22px; }
+  .char-figure.large { width: 54px; height: 90px; min-width: 54px; }
+  .char-figure.large .char-initials { font-size: 18px; }
   .seat-card { width: 160px; }
 }
 
@@ -608,9 +631,13 @@ footer {
 @media print {
   body { background: #fff; color: #111; }
   #setup-form, #history-panel, .view-controls, .consult-controls, .status, #error-box, #resume-panel, footer, .topbar .disclaimer, #stepper, #stage { display: none !important; }
+  /* Print shows the whole debate, not just the sharp view: the
+     expandable full text prints open and the expand buttons hide. */
+  .tx-full[hidden] { display: block; }
+  .tx-expand { display: none; }
   #debate-view { display: block !important; }
   .panel, .tx-entry, .kp-item { background: #fff; color: #111; border-color: #ccc; break-inside: avoid; }
-  .muted, .tx-kind, .kp-meta, .kp-weight { color: #444; }
+  .muted, .tx-kind, .kp-weight { color: #444; }
   .verdict-label { background: #ddd; color: #111; }
   .room-layout { grid-template-columns: 1fr; }
 }
