@@ -30,7 +30,7 @@ BR.voteBadgeClass = function (stance) {
   return "no";
 };
 
-/* Vote stamp on a bust: ENDORSE (green), AMEND (amber), DISSENT (red). */
+/* Vote stamp on a figure: ENDORSE (green), AMEND (amber), DISSENT (red). */
 BR.voteStampClass = function (vote) {
   if (vote === "Endorse") { return "endorse"; }
   if (vote === "Endorse with amendment") { return "amend"; }
@@ -72,52 +72,73 @@ BR.latestCardFor = function (state, advisorId) {
   return null;
 };
 
-/* Animated SVG characters, one per seat. Each seat gets a distinct
-   look (skin, hair, accessory) from a fixed table, never from user
-   input, so no seat can be confused with another. The figure is an
-   inline SVG bust: shoulders in the seat color, a head group that
-   turns, eyes that blink, a mouth that moves with speech, and one
-   arm that gestures. Motion is split cleanly: CSS keyframes drive
-   the loops (blink, breathing, thinking tilt, listening turn,
-   speaking head and arm loops), while GSAP, when the CDN loaded,
-   drives one-shot motion (per-word mouth, speaking arm gesture,
-   panel entrance). The two never fight: GSAP owns only the arm
-   gesture and the mouth, CSS owns everything else, and the page
-   adds a gsap-on class to the body when GSAP is present so the
+/* Animated SVG characters, one per seat. Full cartoon figures:
+   legs, torso, two arms with hands, neck, and a head group
+   that turns, eyes that blink, a mouth that moves with speech, and
+   a gesture arm. Each seat gets a distinct look (skin, hair, top,
+   accessory, brows) from a fixed table, never from user input, so
+   no seat can be confused with another. Motion is split cleanly:
+   CSS keyframes drive the loops (blink, breathing, thinking tilt,
+   listening turn, speaking head and arm loops), while GSAP, when
+   the CDN loaded, drives one-shot motion (per-word mouth, speaking
+   arm gesture, panel entrance). The two never fight: GSAP owns only
+   the gesture arm and the mouth, CSS owns everything else, and the
+   page adds a gsap-on class to the body when GSAP is present so the
    CSS speaking loops stand down. Any other id (including the
    custom advisor) falls back to initials with no face, so it never
    wears a floating mouth. */
 BR.CHAR_LOOK = {
-  operator: { skin: "#e8c39a", hair: "#2b2118", hairStyle: "short", accessory: "tie" },
-  offer: { skin: "#f2c9a0", hair: "#d9a441", hairStyle: "bold", accessory: "none" },
-  investor: { skin: "#e6b98d", hair: "#9aa7b4", hairStyle: "sides", accessory: "glasses" },
-  marketer: { skin: "#c98d5f", hair: "#1f160e", hairStyle: "curly", accessory: "headset" },
-  philosopher: { skin: "#e8c39a", hair: "#3a2c1c", hairStyle: "bald", accessory: "beard" },
-  founder: { skin: "#f0cfa8", hair: "#333333", hairStyle: "cap", accessory: "none" },
-  saas: { skin: "#d9a06b", hair: "#26221e", hairStyle: "buzz", accessory: "badge" },
-  eos: { skin: "#e8c39a", hair: "#1f160e", hairStyle: "long", accessory: "scarf" }
+  operator: { skin: "#e8c39a", hair: "#2b2118", hairStyle: "short", accessory: "tie", top: "shirt", brows: "flat" },
+  offer: { skin: "#f2c9a0", hair: "#d9a441", hairStyle: "bold", accessory: "none", top: "tee", brows: "arched" },
+  investor: { skin: "#e6b98d", hair: "#9aa7b4", hairStyle: "sides", accessory: "glasses", top: "jacket", brows: "flat" },
+  marketer: { skin: "#c98d5f", hair: "#1f160e", hairStyle: "curly", accessory: "headset", top: "tee", brows: "arched" },
+  philosopher: { skin: "#e8c39a", hair: "#3a2c1c", hairStyle: "bald", accessory: "beard", top: "shirt", brows: "flat" },
+  founder: { skin: "#f0cfa8", hair: "#333333", hairStyle: "cap", accessory: "none", top: "jacket", brows: "arched" },
+  saas: { skin: "#d9a06b", hair: "#26221e", hairStyle: "buzz", accessory: "badge", top: "shirt", brows: "flat" },
+  eos: { skin: "#e8c39a", hair: "#1f160e", hairStyle: "long", accessory: "scarf", top: "tee", brows: "arched" }
 };
 
 BR.charHairFor = function (look) {
   var h = look.hair;
-  if (look.hairStyle === "short") { return '<path d="M28 38 Q28 16 48 16 Q68 16 68 38 Q62 24 48 24 Q34 24 28 38 Z" fill="' + h + '"/>'; }
-  if (look.hairStyle === "bold") { return '<path d="M26 40 Q24 12 48 12 Q72 12 70 40 Q64 22 48 22 Q32 22 26 40 Z" fill="' + h + '"/>'; }
-  if (look.hairStyle === "sides") { return '<path d="M28 30 Q26 20 34 18 L34 30 Z" fill="' + h + '"/><path d="M68 30 Q70 20 62 18 L62 30 Z" fill="' + h + '"/>'; }
-  if (look.hairStyle === "curly") { return '<circle cx="34" cy="22" r="7" fill="' + h + '"/><circle cx="48" cy="16" r="8" fill="' + h + '"/><circle cx="62" cy="22" r="7" fill="' + h + '"/>'; }
-  if (look.hairStyle === "cap") { return '<path d="M28 34 Q28 14 48 14 Q68 14 68 34 Z" fill="' + h + '"/><ellipse cx="48" cy="33" rx="22" ry="4" fill="' + h + '"/>'; }
-  if (look.hairStyle === "buzz") { return '<path d="M30 34 Q30 18 48 18 Q66 18 66 34 Q60 24 48 24 Q36 24 30 34 Z" fill="' + h + '"/>'; }
-  if (look.hairStyle === "long") { return '<rect x="26" y="22" width="8" height="28" rx="4" fill="' + h + '"/><rect x="62" y="22" width="8" height="28" rx="4" fill="' + h + '"/>'; }
+  if (look.hairStyle === "short") { return '<path d="M34 42 Q34 14 60 14 Q86 14 86 42 Q80 26 60 26 Q40 26 34 42 Z" fill="' + h + '"/>'; }
+  if (look.hairStyle === "bold") { return '<path d="M32 44 Q30 10 60 10 Q90 10 88 44 Q82 24 60 24 Q38 24 32 44 Z" fill="' + h + '"/>'; }
+  if (look.hairStyle === "sides") { return '<path d="M34 34 Q32 22 40 20 L40 34 Z" fill="' + h + '"/><path d="M86 34 Q88 22 80 20 L80 34 Z" fill="' + h + '"/>'; }
+  if (look.hairStyle === "curly") { return '<circle cx="42" cy="22" r="8" fill="' + h + '"/><circle cx="60" cy="15" r="9" fill="' + h + '"/><circle cx="78" cy="22" r="8" fill="' + h + '"/>'; }
+  if (look.hairStyle === "cap") { return '<path d="M34 36 Q34 12 60 12 Q86 12 86 36 Z" fill="' + h + '"/><ellipse cx="60" cy="35" rx="28" ry="5" fill="' + h + '"/>'; }
+  if (look.hairStyle === "buzz") { return '<path d="M36 36 Q36 18 60 18 Q84 18 84 36 Q78 26 60 26 Q42 26 36 36 Z" fill="' + h + '"/>'; }
+  if (look.hairStyle === "long") { return '<rect x="32" y="24" width="9" height="34" rx="4" fill="' + h + '"/><rect x="79" y="24" width="9" height="34" rx="4" fill="' + h + '"/>'; }
   return "";
 };
 
-BR.charAccessoryFor = function (look, color) {
-  if (look.accessory === "tie") { return '<polygon points="48,68 43,78 48,92 53,78" fill="#14100a"/>'; }
-  if (look.accessory === "glasses") { return '<g fill="none" stroke="#14100a" stroke-width="2"><circle cx="40" cy="38" r="6.5"/><circle cx="56" cy="38" r="6.5"/><line x1="46.5" y1="38" x2="49.5" y2="38"/></g>'; }
-  if (look.accessory === "headset") { return '<g fill="none" stroke="#14100a" stroke-width="2.5" stroke-linecap="round"><path d="M30 36 Q30 14 48 14 Q66 14 66 36"/><line x1="66" y1="36" x2="62" y2="48"/></g>'; }
-  if (look.accessory === "beard") { return '<path d="M32 46 Q48 70 64 46 Q60 56 48 56 Q36 56 32 46 Z" fill="' + look.hair + '"/>'; }
-  if (look.accessory === "badge") { return '<circle cx="66" cy="80" r="5" fill="#e8ecf1"/><circle cx="66" cy="80" r="2" fill="' + color + '"/>'; }
-  if (look.accessory === "scarf") { return '<rect x="30" y="62" width="36" height="8" rx="4" fill="#e8ecf1"/>'; }
+BR.charBrowFor = function (look) {
+  if (look.brows === "arched") {
+    return '<path d="M44 33 Q49 29 54 33" fill="none" stroke="#14100a" stroke-width="1.8" stroke-linecap="round"/><path d="M66 33 Q71 29 76 33" fill="none" stroke="#14100a" stroke-width="1.8" stroke-linecap="round"/>';
+  }
+  return '<line x1="44" y1="32" x2="54" y2="32" stroke="#14100a" stroke-width="1.8" stroke-linecap="round"/><line x1="66" y1="32" x2="76" y2="32" stroke="#14100a" stroke-width="1.8" stroke-linecap="round"/>';
+};
+
+/* Face accessories first, body accessories second: glasses, headset,
+   and beard sit on the face, while tie, badge, and scarf sit on the
+   torso. The beard draws before the mouth, so the mouth stays
+   visible on top of it. */
+BR.charFaceAccessoryFor = function (look) {
+  if (look.accessory === "glasses") { return '<g fill="none" stroke="#14100a" stroke-width="2"><circle cx="50" cy="42" r="7"/><circle cx="70" cy="42" r="7"/><line x1="57" y1="42" x2="63" y2="42"/></g>'; }
+  if (look.accessory === "headset") { return '<g fill="none" stroke="#14100a" stroke-width="2.5" stroke-linecap="round"><path d="M36 40 Q36 12 60 12 Q84 12 84 40"/><line x1="84" y1="40" x2="78" y2="54"/><circle cx="76" cy="56" r="3" fill="#14100a" stroke="none"/></g>'; }
+  if (look.accessory === "beard") { return '<path d="M38 48 Q36 66 50 74 Q60 78 70 74 Q84 66 82 48 Q76 62 60 62 Q44 62 38 48 Z" fill="' + look.hair + '"/>'; }
   return "";
+};
+
+BR.charBodyAccessoryFor = function (look, color) {
+  if (look.accessory === "tie") { return '<polygon points="60,88 54,100 60,126 66,100" fill="#14100a"/>'; }
+  if (look.accessory === "badge") { return '<circle cx="78" cy="102" r="6" fill="#e8ecf1"/><circle cx="78" cy="102" r="2.5" fill="' + color + '"/>'; }
+  if (look.accessory === "scarf") { return '<rect x="40" y="80" width="40" height="9" rx="4" fill="#e8ecf1"/><rect x="66" y="88" width="8" height="14" rx="3" fill="#e8ecf1"/>'; }
+  return "";
+};
+
+BR.charTopFor = function (look) {
+  if (look.top === "shirt") { return '<path d="M50 86 L60 96 L70 86" fill="none" stroke="#14100a" stroke-width="2.5" stroke-linecap="round"/><circle cx="60" cy="108" r="2" fill="#14100a"/><circle cx="60" cy="122" r="2" fill="#14100a"/>'; }
+  if (look.top === "jacket") { return '<polygon points="48,86 60,108 52,152" fill="rgba(0,0,0,0.20)"/><polygon points="72,86 60,108 68,152" fill="rgba(0,0,0,0.20)"/><line x1="60" y1="96" x2="60" y2="150" stroke="#14100a" stroke-width="2"/>'; }
+  return '<path d="M50 86 Q60 96 70 86" fill="none" stroke="#14100a" stroke-width="2.5" stroke-linecap="round"/>';
 };
 
 /* Deterministic blink delay per seat, so the room does not blink in
@@ -128,10 +149,12 @@ BR.blinkDelayFor = function (id) {
   return ((sum % 46) / 10).toFixed(1);
 };
 
-/* One animated character figure. Large (96px) on the stage, small
-   (40px) in the transcript, key points, and consult panels. The
-   mouth sits on the face at a fixed spot in the SVG, so it can never
-   float off the face the way an overlaid div could. */
+/* One animated character figure. Large (72 by 120px) on the stage,
+   small (30 by 50px) in the transcript, key points, and consult
+   panels. The full body reads at a glance: legs and shoes, torso in
+   the seat color with its top style, two arms with hands, neck, and
+   a head with hair, brows, eyes, nose, and a mouth that sits on the
+   face inside the SVG, so it can never float off it. */
 BR.characterFigure = function (a, cls) {
   var look = BR.CHAR_LOOK[a.id];
   if (!look) {
@@ -139,17 +162,21 @@ BR.characterFigure = function (a, cls) {
   }
   var color = BR.esc(a.color);
   var skin = look.skin;
-  var svg = '<svg class="char-svg" viewBox="0 0 96 96" aria-hidden="true">';
-  svg += '<path d="M14 96 Q14 68 48 68 Q82 68 82 96 Z" fill="' + color + '"/>';
-  svg += '<rect x="42" y="52" width="12" height="18" fill="' + skin + '"/>';
-  svg += '<g class="char-arm"><path d="M70 74 Q84 80 80 92" stroke="' + color + '" stroke-width="7" stroke-linecap="round" fill="none"/></g>';
+  var svg = '<svg class="char-svg" viewBox="0 0 120 200" aria-hidden="true">';
+  svg += '<g class="char-arm"><path d="M36 90 Q28 110 30 132" stroke="' + color + '" stroke-width="11" stroke-linecap="round" fill="none"/><circle cx="30" cy="138" r="6" fill="' + skin + '"/></g>';
+  svg += '<g class="char-legs"><rect x="46" y="150" width="12" height="40" rx="4" fill="#232a33"/><rect x="62" y="150" width="12" height="40" rx="4" fill="#232a33"/><ellipse cx="52" cy="192" rx="9" ry="5" fill="#14100a"/><ellipse cx="68" cy="192" rx="9" ry="5" fill="#14100a"/></g>';
+  svg += '<g class="char-torso"><path d="M36 88 Q60 80 84 88 L84 152 Q60 158 36 152 Z" fill="' + color + '"/>' + BR.charTopFor(look) + BR.charBodyAccessoryFor(look, color) + '</g>';
+  svg += '<g class="char-arm char-arm-g"><path d="M84 90 Q96 104 92 128" stroke="' + color + '" stroke-width="11" stroke-linecap="round" fill="none"/><circle cx="92" cy="134" r="6" fill="' + skin + '"/></g>';
+  svg += '<rect x="54" y="66" width="12" height="20" fill="' + skin + '"/>';
   svg += '<g class="char-head">';
-  svg += '<circle cx="48" cy="38" r="20" fill="' + skin + '"/>';
+  svg += '<circle cx="34" cy="44" r="5" fill="' + skin + '"/><circle cx="86" cy="44" r="5" fill="' + skin + '"/>';
+  svg += '<ellipse cx="60" cy="44" rx="26" ry="28" fill="' + skin + '"/>';
   svg += BR.charHairFor(look);
-  svg += '<g class="char-eyes"><circle cx="40" cy="38" r="2.6" fill="#14100a"/><circle cx="56" cy="38" r="2.6" fill="#14100a"/></g>';
-  svg += '<g stroke="#14100a" stroke-width="1.6" stroke-linecap="round"><line x1="36" y1="31" x2="44" y2="31"/><line x1="52" y1="31" x2="60" y2="31"/></g>';
-  svg += '<ellipse class="char-mouth" cx="48" cy="50" rx="6" ry="2.5" fill="#7c2a2a"/>';
-  svg += BR.charAccessoryFor(look, color);
+  svg += BR.charFaceAccessoryFor(look);
+  svg += BR.charBrowFor(look);
+  svg += '<g class="char-eyes"><circle cx="50" cy="42" r="3" fill="#14100a"/><circle cx="70" cy="42" r="3" fill="#14100a"/><circle cx="51" cy="41" r="1" fill="#fff"/><circle cx="71" cy="41" r="1" fill="#fff"/></g>';
+  svg += '<path d="M60 46 Q58 52 60 54" fill="none" stroke="#14100a" stroke-width="1.4" stroke-linecap="round"/>';
+  svg += '<ellipse class="char-mouth" cx="60" cy="62" rx="8" ry="3" fill="#7c2a2a"/>';
   svg += '</g></svg>';
   return '<span class="char-figure ' + (cls || "") + '" style="--blink-delay:' + BR.blinkDelayFor(a.id) + 's">' + svg + '</span>';
 };
@@ -183,19 +210,19 @@ BR.charMouth = function (figureEl, mouthClass) {
 };
 
 /* One-shot speaking arm gesture. GSAP only: a short raise and fall
-   of the arm when a line starts. Without GSAP the CSS speaking loop
-   on the arm carries the gesture instead, so this is never called
-   unless GSAP loaded. */
+   of the front gesture arm when a line starts speaking. Without
+   GSAP the CSS speaking loop carries the arm instead, so this is
+   never called unless GSAP loaded. */
 BR.charGesture = function (figureEl) {
   if (!figureEl || typeof window === "undefined" || !window.gsap) { return; }
-  var arm = figureEl.querySelector(".char-arm");
+  var arm = figureEl.querySelector(".char-arm-g");
   if (!arm) { return; }
   /* svgOrigin, not transformOrigin: the shoulder sits at viewBox
-     point (70, 74), and a px transformOrigin on SVG is ambiguous
+     point (84, 90), and a px transformOrigin on SVG is ambiguous
      across GSAP's bbox handling, which could swing the arm around
      a point far outside the figure. svgOrigin pins the pivot to
      the shoulder exactly. */
-  window.gsap.fromTo(arm, { rotation: 0, svgOrigin: "70 74" }, { rotation: -32, duration: 0.35, yoyo: true, repeat: 1, ease: "sine.inOut" });
+  window.gsap.fromTo(arm, { rotation: 0, svgOrigin: "84 90" }, { rotation: -32, duration: 0.35, yoyo: true, repeat: 1, ease: "sine.inOut" });
 };
 
 /* Live character states. Exactly one per seat at a time, enforced by
@@ -563,16 +590,78 @@ BR.renderCruxes = function (container, state) {
     html += '</li>';
   });
   html += '</ol>';
-  html += '<h3>Chair weights</h3><div class="table-scroll"><table class="weights-table"><thead><tr><th>Seat</th><th>Weight</th><th>Reason</th></tr></thead><tbody>';
-  state.advisors.forEach(function (a) {
+  html += '<h3>Chair weights</h3><p class="weights-line">Chair weights: ' + state.advisors.map(function (a) {
     var w = state.director.weights[a.id] ? state.director.weights[a.id] : { weight: 1, reason: "General relevance." };
-    html += '<tr><td>' + BR.esc(a.short) + '</td><td>' + BR.esc(w.weight) + ' / 3</td><td>' + BR.esc(w.reason) + '</td></tr>';
-  });
-  html += '</tbody></table></div>';
+    return BR.esc(a.short) + " " + BR.esc(w.weight);
+  }).join(" · ") + '</p>';
+  html += '<p class="muted">Full weight reasons live in the verdict sheet full detail, so the fault lines stay one quiet line instead of a second competing table.</p>';
   if (state.director.assumptions && state.director.assumptions.length > 0) {
     html += '<p class="muted">Assumptions: ' + state.director.assumptions.map(function (a) { return BR.esc(a); }).join("; ") + '</p>';
   }
   container.innerHTML = html;
+};
+
+/* Sharp view for one transcript body: a one-line headline, up to two
+   short supporting sentences, and the rest behind an expand control.
+   An explicit headline from the model wins; otherwise the first
+   sentence is the headline. Everything is cut at sentence
+   boundaries, never mid-sentence, and a body of two sentences or
+   fewer has no remainder, so short cards render with no control at
+   all. Pure presentation: the full text is never altered, only
+   split, so playback, copy, and download still read the whole
+   body. */
+BR.splitSharp = function (body, headline) {
+  var text = (body || "").replace(/\s+/g, " ").trim();
+  if (!text) { return { headline: "", excerpt: "", rest: "", hasMore: false }; }
+  var sentences = text.match(/[^.!?]+[.!?]+["')\]]*/g) || [text];
+  sentences = sentences.map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; });
+  function capWords(s, max) {
+    if (s.length <= max) { return s; }
+    var cut = s.slice(0, max);
+    var sp = cut.lastIndexOf(" ");
+    return (sp > 40 ? cut.slice(0, sp) : cut).replace(/[,\s]+$/, "") + "...";
+  }
+  var given = (headline || "").trim();
+  var head = given ? capWords(given, 160) : capWords(sentences[0], 160);
+  var start = 1;
+  if (given && sentences.length > 0) {
+    var probe = given.slice(0, 30);
+    if (sentences[0].indexOf(probe) === 0 || given.indexOf(sentences[0].slice(0, 30)) === 0) { start = 1; }
+    else { start = 0; }
+  }
+  var parts = [];
+  var len = 0;
+  var i = start;
+  while (i < sentences.length && parts.length < 2 && len + sentences[i].length <= 280) {
+    parts.push(sentences[i]);
+    len += sentences[i].length;
+    i += 1;
+  }
+  var rest = sentences.slice(i).join(" ");
+  return { headline: head, excerpt: parts.join(" "), rest: rest, hasMore: rest.length > 0 };
+};
+
+/* The extra lines of one transcript entry, each shown only when the
+   card actually carries it. A card with no concession shows no
+   concession line, never an invented one. These live inside the
+   expandable full text, never in the sharp view, so a discussion
+   entry reads as one headline plus two lines by default instead of
+   a stack of six. */
+BR.txExtrasFor = function (t, displayTo) {
+  var extras = [];
+  if (t.disagreeWith) { extras.push("Rebuts " + BR.esc(t.disagreeWith)); }
+  if (t.kind === "discussion" && t.answerTo) {
+    extras.push("Answers " + BR.esc(displayTo) + " (" + BR.esc(t.agree || "") + " on: " + BR.esc(t.pointAnswered || "") + ")");
+    if (t.steelman) { extras.push("Steelman: " + BR.esc(t.steelman)); }
+    if (t.weakPoint) { extras.push("Weak point: " + BR.esc(t.weakPoint)); }
+    if (t.concede) { extras.push("Concedes: " + BR.esc(t.concede)); }
+    if (t.costOfBeingWrong || t.evidenceDemanded) {
+      extras.push("Cost if wrong: " + BR.esc(t.costOfBeingWrong || "") + " · Settles it: " + BR.esc(t.evidenceDemanded || ""));
+    }
+  } else if (t.concede) {
+    extras.push("Concedes: " + BR.esc(t.concede));
+  }
+  return extras;
 };
 
 BR.renderTranscript = function (container, state, speakingId, workingLabel) {
@@ -580,46 +669,56 @@ BR.renderTranscript = function (container, state, speakingId, workingLabel) {
     container.innerHTML = '<p class="muted">No conversation yet. Start a debate and every step will appear here live.</p>';
     return;
   }
+  /* One entry, sharp by default: headline plus up to two supporting
+     sentences, then the full text and the extra lines behind one
+     visible expand control. Short entries with no extras render
+     exactly as before, badge in the head; long entries keep the
+     head to speaker plus kind, and the badge moves into the full
+     text, so no head ever carries a stack of pills. */
+  function entryBlocks(t, displayTo) {
+    var sharp = BR.splitSharp(t.body || "", t.headline || "");
+    var extras = BR.txExtrasFor(t, displayTo || "");
+    var badge = BR.servedBadgeFor(state, t.stepKey);
+    var showToggle = sharp.hasMore || extras.length > 0;
+    var out = { headBadge: showToggle ? "" : badge, blocks: "" };
+    if (!showToggle) {
+      out.blocks = '<div class="tx-body">' + BR.esc(t.body || "") + '</div>';
+      return out;
+    }
+    var sharpHtml = "";
+    if (sharp.headline || sharp.excerpt) {
+      sharpHtml = '<div class="tx-sharp">';
+      if (sharp.headline) { sharpHtml += '<div class="tx-headline">' + BR.esc(sharp.headline) + '</div>'; }
+      if (sharp.excerpt) { sharpHtml += '<div class="tx-excerpt">' + BR.esc(sharp.excerpt) + '</div>'; }
+      sharpHtml += '</div>';
+    }
+    var fullHtml = '<div class="tx-full" hidden><div class="tx-body">' + BR.esc(t.body || "") + '</div>';
+    extras.forEach(function (e) { fullHtml += '<div class="tx-rebuts">' + e + '</div>'; });
+    if (badge) { fullHtml += '<div>' + badge + '</div>'; }
+    fullHtml += '</div>';
+    out.blocks = sharpHtml + fullHtml +
+      '<button class="tx-expand" type="button" data-show-label="' + (sharp.hasMore ? "Show full text" : "Show detail") + '">' + (sharp.hasMore ? "Show full text" : "Show detail") + '</button>';
+    return out;
+  }
   var html = "";
   state.transcript.forEach(function (t) {
     if (t.kind === "director" || t.speaker === "Director") {
+      var dBlocks = entryBlocks(t, "");
       html += '<div class="tx-entry tx-director" data-speaker="director" data-kind="' + BR.esc(t.kind) + '"><div class="tx-head"><span class="tx-speaker">Director</span>';
-      html += '<span class="tx-kind">' + BR.esc(t.title) + '</span>' + BR.servedBadgeFor(state, t.stepKey) + '</div>';
-      html += '<div class="tx-body">' + BR.esc(t.body) + '</div></div>';
+      html += '<span class="tx-kind">' + BR.esc(t.title) + '</span>' + dBlocks.headBadge + '</div>';
+      html += dBlocks.blocks + '</div>';
     } else {
       var adv = BR.advisorByShort(state, t.speaker);
       var speakerId = adv ? adv.id : "";
       var displayTo = (t.kind === "discussion" && typeof BR.displayDiscussionTarget === "function")
         ? BR.displayDiscussionTarget(state, t)
         : (t.answerTo || "");
+      var aBlocks = entryBlocks(t, displayTo);
       html += '<div class="tx-entry tx-advisor" data-speaker="' + BR.esc(speakerId) + '" data-kind="' + BR.esc(t.kind) + '" data-answer-to="' + BR.esc(displayTo) + '" data-disagree-with="' + BR.esc(t.disagreeWith || "") + '">';
       if (adv) { html += BR.characterFigure(adv, ""); }
       html += '<div class="tx-content"><div class="tx-head"><span class="tx-speaker">' + BR.esc(t.speaker) + '</span>';
-      html += '<span class="tx-kind">' + BR.esc(t.title) + '</span>' + BR.servedBadgeFor(state, t.stepKey) + '</div>';
-      html += '<div class="tx-body">' + BR.esc(t.body) + '</div>';
-      if (t.disagreeWith) {
-        html += '<div class="tx-rebuts">Rebuts ' + BR.esc(t.disagreeWith) + '</div>';
-      }
-      /* Weak point and concession are separate lines, each shown
-         only when the card actually carries it. A card with no
-         concession shows no concession line, never an invented one. */
-      if (t.kind === "discussion" && t.answerTo) {
-        html += '<div class="tx-rebuts">Answers ' + BR.esc(displayTo) + ' (' + BR.esc(t.agree || "") + ' on: ' + BR.esc(t.pointAnswered || "") + ')</div>';
-        if (t.steelman) {
-          html += '<div class="tx-rebuts">Steelman: ' + BR.esc(t.steelman) + '</div>';
-        }
-        if (t.weakPoint) {
-          html += '<div class="tx-rebuts">Weak point: ' + BR.esc(t.weakPoint) + '</div>';
-        }
-        if (t.concede) {
-          html += '<div class="tx-rebuts">Concedes: ' + BR.esc(t.concede) + '</div>';
-        }
-        if (t.costOfBeingWrong || t.evidenceDemanded) {
-          html += '<div class="tx-rebuts">Cost if wrong: ' + BR.esc(t.costOfBeingWrong || "") + ' &middot; Settles it: ' + BR.esc(t.evidenceDemanded || "") + '</div>';
-        }
-      } else if (t.concede) {
-        html += '<div class="tx-rebuts">Concedes: ' + BR.esc(t.concede) + '</div>';
-      }
+      html += '<span class="tx-kind">' + BR.esc(t.title) + '</span>' + aBlocks.headBadge + '</div>';
+      html += aBlocks.blocks;
       html += '</div></div>';
     }
   });
@@ -657,8 +756,7 @@ BR.renderKeyPoints = function (container, state) {
       html += '<div class="kp-item" data-seat-id="' + BR.esc(a.id) + '">' + BR.characterFigure(a, "") + '<div class="kp-content">';
       html += '<div class="kp-head"><span class="kp-name">' + BR.esc(a.short) + '</span>';
       html += '<span class="kp-weight">Weight ' + BR.esc(w) + ' / 3</span></div>';
-      html += '<div class="kp-line"><span class="vote-badge ' + badgeClass + '">' + BR.esc(finalCell) + '</span></div>';
-      html += '<div class="kp-meta">Pillar ' + BR.esc(v.pillarScores[a.id]) + '/10</div>';
+      html += '<div class="kp-line"><span class="vote-badge ' + badgeClass + '">' + BR.esc(finalCell) + '</span> · Pillar ' + BR.esc(v.pillarScores[a.id]) + '/10</div>';
       html += '<div class="kp-reason">' + BR.esc(f ? f.line : "") + '</div>';
       html += '</div></div>';
     });
@@ -678,7 +776,6 @@ BR.renderKeyPoints = function (container, state) {
     }
     if (card) {
       items += '<div class="kp-line"><span class="vote-badge ' + BR.voteBadgeClass(card.stance) + '">' + BR.esc(card.stance) + '</span> Option ' + BR.esc(card.recommendedId) + ': ' + BR.esc(card.optionScores[card.recommendedId]) + '/10</div>';
-      items += '<div class="kp-meta">Pillar ' + BR.esc(card.pillarScore) + '/10 &middot; Confidence ' + BR.esc(card.confidence) + '/5 &middot; Ruin: ' + BR.esc(card.ruinRisk) + ' &middot; Door: ' + BR.esc(card.door) + '</div>';
       items += '<div class="kp-reason">' + BR.esc(card.reason) + '</div>';
     } else {
       items += '<div class="kp-line"><span class="vote-badge waiting">Waiting</span></div>';
@@ -727,9 +824,13 @@ BR.renderDraft = function (container, state) {
   container.innerHTML = html;
 };
 
-/* Verdict sheet: label and call, option bars with weighted maths,
-   stats, why it won, pillar scorecard with fixes, draft content,
-   overrides, minority, then a collapsible full detail section. */
+/* Verdict sheet, verdict first: the winning option and the
+   one-line call at the top, then the 3 deciding reasons, then every
+   seat in one sharp line. Option bars, maths, stats, and the rest
+   live behind one Full detail control, so a reader grasps the
+   outcome in under 30 seconds and nothing competes with it. The
+   data and maths behind the sheet are exactly as before; only the
+   presentation changed. */
 BR.renderVerdict = function (container, state) {
   if (!state.verdict) {
     container.innerHTML = '<p class="muted">The verdict appears here after the final vote.</p>';
@@ -737,44 +838,28 @@ BR.renderVerdict = function (container, state) {
   }
   var v = state.verdict;
   var d = state.draft;
-  var html = '<div class="verdict-label">' + BR.esc(v.label) + '</div>';
+  var html = '<div class="verdict-sheet"><div class="verdict-label">' + BR.esc(v.label) + '</div>';
   html += '<p class="verdict-call">Option ' + BR.esc(v.recommendedId) + ' ' + BR.esc(BR.optionLabelOf(state, v.recommendedId)) + ', scoring ' + BR.esc(v.recommendedScore) + '/10.</p>';
-  html += '<div class="option-bars">';
-  state.options.forEach(function (o) {
-    var score = v.optionScores[o.id].score;
-    html += '<div class="option-row"><div class="option-row-label">Option ' + BR.esc(o.id) + ' ' + BR.esc(o.label) + ': ' + BR.esc(score) + '/10</div>';
-    html += '<div class="option-bar"><div class="option-bar-fill" style="width:' + BR.esc(score * 10) + '%"></div></div></div>';
-  });
-  html += '</div>';
-  html += '<div class="math-lines">';
-  state.options.forEach(function (o) {
-    html += '<div>' + BR.esc(v.optionScores[o.id].math) + '</div>';
-  });
-  html += '</div>';
-  html += '<div class="verdict-stats">';
-  html += '<span>Support ' + BR.esc(v.support) + '/10</span><span>Confidence ' + BR.esc(v.confidence) + '/10</span>';
-  html += '<span>Spread ' + BR.esc(v.spread) + '</span>';
-  html += '<span>Vote: ' + BR.esc(v.votes.endorse) + ' endorse, ' + BR.esc(v.votes.amend) + ' amend, ' + BR.esc(v.votes.dissent) + ' dissent</span>';
-  html += '</div>';
   if (v.topReasons && v.topReasons.length > 0) {
-    html += '<h3>Why it won</h3><ol>';
-    v.topReasons.forEach(function (r) {
+    html += '<h3>Why it won</h3><ol class="verdict-reasons">';
+    v.topReasons.slice(0, 3).forEach(function (r) {
       html += '<li><strong>' + BR.esc(r.short) + '</strong> (pillar ' + BR.esc(r.pillarScore) + '/10): ' + BR.esc(r.reason) + '</li>';
     });
     html += '</ol>';
   }
-  html += '<h3>Pillar scorecard</h3><div class="table-scroll"><table class="score-table"><thead><tr><th>Seat</th><th>Dimension</th><th>Pillar</th></tr></thead><tbody>';
+  /* Every seat, one sharp line: vote, score, weight, pillar, final
+     line. This replaces the pillar scorecard table and absorbs the
+     chair weights, so the sheet has one hierarchy and no competing
+     tables. The scores and maths behind it are untouched. */
+  html += '<h3>Every seat, one line</h3><div class="verdict-seats">';
   state.advisors.forEach(function (a) {
-    html += '<tr><td>' + BR.esc(a.short) + '</td><td>' + BR.esc(a.dimension) + '</td><td>' + BR.esc(v.pillarScores[a.id]) + '/10</td></tr>';
+    var f = state.final[a.id];
+    var w = state.director && state.director.weights[a.id] ? state.director.weights[a.id].weight : 1;
+    var voteCls = !f ? "waiting" : (f.vote === "Endorse" ? "yes" : (f.vote === "Endorse with amendment" ? "yes-if" : "no"));
+    var voteText = (f && f.vote) ? f.vote + " (" + f.finalScore + "/10)" : "No vote";
+    html += '<div class="verdict-seat"><strong>' + BR.esc(a.short) + '</strong> <span class="vote-badge ' + voteCls + '">' + BR.esc(voteText) + '</span> · Weight ' + BR.esc(w) + ' · Pillar ' + BR.esc(v.pillarScores[a.id]) + '/10: <span class="verdict-seat-line">' + BR.esc(f ? f.line : "") + '</span></div>';
   });
-  html += '</tbody></table></div>';
-  if (v.pillarFixes && v.pillarFixes.length > 0) {
-    html += '<h3>Pillar fixes</h3><ul>';
-    v.pillarFixes.forEach(function (f) {
-      html += '<li><strong>' + BR.esc(f.dimension) + '</strong> scores ' + BR.esc(f.score) + '/10 (' + BR.esc(f.short) + '). Fix: ' + BR.esc(f.line) + '</li>';
-    });
-    html += '</ul>';
-  }
+  html += '</div>';
   if (d) {
     html += '<h3>Conditions</h3><ul>';
     d.conditions.forEach(function (c) {
@@ -802,6 +887,38 @@ BR.renderVerdict = function (container, state) {
     html += '<h3>Minority report</h3><p>' + BR.esc(v.minority.short) + ' dissented: ' + BR.esc(v.minority.reason) + '</p>';
   }
   html += '<details><summary>Full detail</summary>';
+  html += '<h3>Option scores</h3><div class="option-bars">';
+  state.options.forEach(function (o) {
+    var score = v.optionScores[o.id].score;
+    html += '<div class="option-row"><div class="option-row-label">Option ' + BR.esc(o.id) + ' ' + BR.esc(o.label) + ': ' + BR.esc(score) + '/10</div>';
+    html += '<div class="option-bar"><div class="option-bar-fill" style="width:' + BR.esc(score * 10) + '%"></div></div></div>';
+  });
+  html += '</div>';
+  html += '<div class="math-lines">';
+  state.options.forEach(function (o) {
+    html += '<div>' + BR.esc(v.optionScores[o.id].math) + '</div>';
+  });
+  html += '</div>';
+  html += '<div class="verdict-stats">';
+  html += '<span>Support ' + BR.esc(v.support) + '/10</span><span>Confidence ' + BR.esc(v.confidence) + '/10</span>';
+  html += '<span>Spread ' + BR.esc(v.spread) + '</span>';
+  html += '<span>Vote: ' + BR.esc(v.votes.endorse) + ' endorse, ' + BR.esc(v.votes.amend) + ' amend, ' + BR.esc(v.votes.dissent) + ' dissent</span>';
+  html += '</div>';
+  if (state.director && state.director.weights) {
+    html += '<h3>Chair weights</h3><ul>';
+    state.advisors.forEach(function (a) {
+      var w = state.director.weights[a.id] ? state.director.weights[a.id] : { weight: 1, reason: "General relevance." };
+      html += '<li><strong>' + BR.esc(a.short) + '</strong> ' + BR.esc(w.weight) + ' / 3: ' + BR.esc(w.reason) + '</li>';
+    });
+    html += '</ul>';
+  }
+  if (v.pillarFixes && v.pillarFixes.length > 0) {
+    html += '<h3>Pillar fixes</h3><ul>';
+    v.pillarFixes.forEach(function (f) {
+      html += '<li><strong>' + BR.esc(f.dimension) + '</strong> scores ' + BR.esc(f.score) + '/10 (' + BR.esc(f.short) + '). Fix: ' + BR.esc(f.line) + '</li>';
+    });
+    html += '</ul>';
+  }
   if (d && d.risks.length > 0) {
     html += '<h3>Hidden risks</h3><ul>';
     d.risks.forEach(function (r) { html += '<li>' + BR.esc(r) + '</li>'; });
@@ -834,7 +951,7 @@ BR.renderVerdict = function (container, state) {
     html += '</ul>';
   }
   html += '</details>';
-  html += '<p class="muted sim-note">Advisors on this board are AI simulations inspired by public frameworks. They are not the real people and do not speak for them.</p>';
+  html += '<p class="muted sim-note">Advisors on this board are AI simulations inspired by public frameworks. They are not the real people and do not speak for them.</p></div>';
   container.innerHTML = html;
 };
 

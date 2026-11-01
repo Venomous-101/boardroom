@@ -330,6 +330,17 @@ document.addEventListener("DOMContentLoaded", function () {
     if (!entryEl) { if (onDone) { onDone(); } return; }
     var bodyEl = entryEl.querySelector(".tx-body");
     if (!bodyEl) { if (onDone) { onDone(); } return; }
+    /* The full text lives behind the expand control on long entries,
+       so playback unhides it first: a word-by-word reveal inside a
+       hidden block would play to nobody. The sharp headline above
+       stays put, and the button flips to Hide so the reader can
+       collapse again after. */
+    var fullBlock = entryEl.querySelector(".tx-full");
+    if (fullBlock && fullBlock.hidden) {
+      fullBlock.hidden = false;
+      var expandBtn = entryEl.querySelector(".tx-expand");
+      if (expandBtn) { expandBtn.textContent = "Hide full text"; }
+    }
     var fullText = bodyEl.textContent || "";
     var words = BR.splitWords ? BR.splitWords(fullText) : fullText.split(/\s+/).filter(Boolean);
     if (words.length === 0) { if (onDone) { onDone(); } return; }
@@ -735,6 +746,20 @@ document.addEventListener("DOMContentLoaded", function () {
   els.stage.addEventListener("click", function (ev) {
     var seat = ev.target.closest ? ev.target.closest("[data-seat-id]") : null;
     if (seat) { focusSeat(seat.getAttribute("data-seat-id")); }
+  });
+
+  /* Transcript expand control: one tap reveals the full text and
+     the extra lines of a long entry, another tap hides them again.
+     Delegated, because the transcript re-renders on every step. */
+  els.transcript.addEventListener("click", function (ev) {
+    var btn = ev.target.closest ? ev.target.closest(".tx-expand") : null;
+    if (!btn) { return; }
+    var entry = btn.closest(".tx-entry");
+    if (!entry) { return; }
+    var full = entry.querySelector(".tx-full");
+    if (!full) { return; }
+    full.hidden = !full.hidden;
+    btn.textContent = full.hidden ? (btn.getAttribute("data-show-label") || "Show full text") : "Hide full text";
   });
 
   els.stage.addEventListener("keydown", function (ev) {

@@ -234,6 +234,7 @@ BR.validateOpening = function (obj, optionIds) {
     confidence: BR.toConfidence(obj.confidence, 3),
     ruinRisk: ruin,
     door: door,
+    headline: BR.clampText(typeof obj.headline === "string" ? obj.headline : "", 160),
     reason: BR.clampText(typeof obj.reason === "string" ? obj.reason : "", 300),
     changeMind: BR.clampText(typeof obj.changeMind === "string" ? obj.changeMind : "", 200)
   };
@@ -244,7 +245,7 @@ BR.validateDebate = function (obj, optionIds) {
   var base = BR.validateOpening(obj, optionIds);
   if (!base) { return null; }
   base.disagreeWith = BR.clampText(typeof obj.disagreeWith === "string" ? obj.disagreeWith : "", 60);
-  base.rebuttal = BR.clampText(typeof obj.rebuttal === "string" ? obj.rebuttal : "", 600);
+  base.rebuttal = BR.clampText(typeof obj.rebuttal === "string" ? obj.rebuttal : "", 500);
   base.concede = BR.clampText(typeof obj.concede === "string" ? obj.concede : "", 300);
   base.cruxAnswers = Array.isArray(obj.cruxAnswers) ? obj.cruxAnswers.slice(0, 3).map(function (a) { return BR.clampText(String(a), 300); }) : [];
   base.moved = BR.clampText(typeof obj.moved === "string" ? obj.moved : "no", 120);
@@ -307,10 +308,11 @@ BR.validateDiscussion = function (obj) {
   return {
     answerTo: BR.clampText(answerTo.trim(), 60),
     agree: agree,
+    headline: BR.clampText(typeof obj.headline === "string" ? obj.headline : "", 160),
     pointAnswered: BR.clampText(obj.pointAnswered.trim(), 300),
     steelman: BR.clampText(obj.steelman.trim(), 300),
     weakPoint: BR.clampText(weakPoint.trim(), 300),
-    reply: BR.clampText(obj.reply.trim(), 600),
+    reply: BR.clampText(obj.reply.trim(), 500),
     concede: BR.clampText(concede.trim(), 300),
     costOfBeingWrong: BR.clampText(obj.costOfBeingWrong.trim(), 300),
     evidenceDemanded: BR.clampText(obj.evidenceDemanded.trim(), 200),
@@ -503,7 +505,7 @@ BR.validateFinal = function (obj) {
     finalScore: finalScore,
     finalPillarScore: BR.toScore(obj.finalPillarScore, 5),
     amendment: BR.clampText(typeof obj.amendment === "string" ? obj.amendment : "", 300),
-    line: BR.clampText(typeof obj.line === "string" ? obj.line : "", 220)
+    line: BR.clampText(typeof obj.line === "string" ? obj.line : "", 160)
   };
 };
 
@@ -827,7 +829,7 @@ BR.directorUser = function (state) {
   });
   lines.push(BR.FOCUS_LINES[state.focus] || BR.FOCUS_LINES.balanced);
   lines.push("Return ONLY this JSON object, nothing else:");
-  lines.push('{"brief": "under 200 words framing the decision, options, and what is at stake",');
+  lines.push('{"brief": "under 120 words framing the decision, options, and what is at stake",');
   lines.push('"weights": [{"advisorId": "id", "weight": 1-3, "reason": "one line"}],');
   lines.push('"cruxes": [{"question": "one underlying disagreement, under 140 chars", "sides": [{"position": "short", "seats": ["Short names"]}]}],');
   lines.push('"assumptions": ["anything you assumed, or empty"]}');
@@ -844,10 +846,10 @@ BR.openingUser = function (state, advisor, weight) {
   lines.push("Your weight on this decision: " + weight + "/3.");
   lines.push(BR.FOCUS_LINES[state.focus] || BR.FOCUS_LINES.balanced);
   lines.push("This is Round 1, your opening position. Return ONLY this JSON object, nothing else:");
-  lines.push('{"stance": "Strong yes | Yes | Yes, if | No | Strong no, on the option you recommend",');
+  lines.push('{"headline": "one line, your sharpest point", "stance": "Strong yes | Yes | Yes, if | No | Strong no, on the option you recommend",');
   lines.push('"optionScores": {' + state.options.map(function (o) { return '"' + o.id + '": 0-10'; }).join(", ") + '},');
   lines.push('"pillarScore": 0-10, "confidence": 1-5, "ruinRisk": "none | possible | likely", "door": "one-way | two-way",');
-  lines.push('"reason": "one line, your core argument", "changeMind": "one concrete fact or number that would change your mind"}');
+  lines.push('"reason": "one line, under 60 words, your core argument", "changeMind": "one concrete fact or number that would change your mind"}');
   return lines.join("\n");
 };
 
@@ -872,10 +874,10 @@ BR.debateUser = function (state, advisor, prevCards, roundNumber) {
   }
   lines.push(BR.FOCUS_LINES[state.focus] || BR.FOCUS_LINES.balanced);
   lines.push("This is debate round " + roundNumber + ". Return ONLY this JSON object, nothing else:");
-  lines.push('{"disagreeWith": "short name of the seat you disagree with most", "rebuttal": "your rebuttal, under 600 chars",');
+  lines.push('{"headline": "one line, your sharpest point", "disagreeWith": "short name of the seat you disagree with most", "rebuttal": "your rebuttal, under 80 words",');
   lines.push('"concede": "the strongest point against you and what it changes", "cruxAnswers": ["one or two lines per crux"],');
   lines.push('"stance": "Strong yes | Yes | Yes, if | No | Strong no",');
-  lines.push('"reason": "one line, your core argument for your recommended option",');
+  lines.push('"reason": "one line, under 60 words, your core argument for your recommended option",');
   lines.push('"optionScores": {' + state.options.map(function (o) { return '"' + o.id + '": 0-10'; }).join(", ") + '},');
   lines.push('"pillarScore": 0-10, "confidence": 1-5, "ruinRisk": "none | possible | likely",');
   lines.push('"moved": "no, or yes, from X to Y, because ...", "conditions": ["up to three concrete checkable conditions for yes"]}');
@@ -906,10 +908,11 @@ BR.discussionUser = function (state, advisor, target, targetCard) {
   lines.push(BR.FOCUS_LINES[state.focus] || BR.FOCUS_LINES.balanced);
   lines.push("This is the discussion round, and it is adversarial, not polite. First steelman the target's point at its strongest, in your own words, in the steelman field: that field is required and must be at least 20 characters, and it must restate the target point fairly before any attack. Then attack its weakest premise with a number or a mechanism, not with tone. Concede only when beaten: if the point defeats your premise, say exactly what you concede and what it changes; if it does not, say you concede nothing AND give the reason why the attack fails, in at least 20 characters of reason. A bare word like nothing on its own is not a concession and will be rejected. End by pricing being wrong and naming the one fact or number that would settle the point. Do not repeat your opening. Return ONLY this JSON object, nothing else:");
   lines.push('{"answerTo": "short name of the seat you are answering", "agree": "agree | disagree",');
+  lines.push('"headline": "one line, your sharpest point",');
   lines.push('"steelman": "the target point at its strongest, in your own words, at least 20 characters",');
   lines.push('"pointAnswered": "the target point in short label form",');
   lines.push('"weakPoint": "the weakest premise in that point, stated plainly",');
-  lines.push('"reply": "your attack on that premise, under 600 chars",');
+  lines.push('"reply": "your attack on that premise, under 80 words",');
   lines.push('"concede": "exactly what you concede, or nothing and why",');
   lines.push('"costOfBeingWrong": "what it costs if your reply is wrong",');
   lines.push('"evidenceDemanded": "the one fact or number that would settle it",');
@@ -956,7 +959,7 @@ BR.finalUser = function (state, advisor) {
   }
   lines.push('{"vote": "Endorse | Endorse with amendment | Dissent", "finalScore": 0-10 support for the resolution,');
   lines.push('"finalPillarScore": 0-10, "amendment": "what to change, or why you dissent (blank if you endorse)",');
-  lines.push('"line": "the one thing from your pillar the founder must not forget, including the cost of being wrong and the kill signal"}');
+  lines.push('"line": "under 25 words, the one thing from your pillar the founder must not forget, including the cost of being wrong and the kill signal"}');
   return lines.join("\n");
 };
 
@@ -972,7 +975,7 @@ BR.consultUser = function (state, advisor) {
   }
   lines.push("Your pillar is " + advisor.pillar + ". Your question to own is: " + advisor.question);
   lines.push(BR.FOCUS_LINES[state.focus] || BR.FOCUS_LINES.balanced);
-  lines.push("Answer as prose, in this order: your recommendation (which option, or none), why from your pillar, the biggest risk, and the one fact or number that would change your mind. Keep it under 400 words.");
+  lines.push("Answer as prose, in this order: your recommendation (which option, or none), why from your pillar, the biggest risk, and the one fact or number that would change your mind. Keep it under 250 words.");
   return lines.join("\n");
 };
 
@@ -1049,7 +1052,7 @@ BR.applyStepResult = function (state, step, parsed) {
     if (!o) { return { ok: false }; }
     state.opening[step.advisorId] = o;
     var adv = BR.advisorById(state, step.advisorId);
-    state.transcript.push({ kind: "vote", speaker: adv ? adv.short : step.advisorId, title: "Opening vote", body: o.stance + " on option " + o.recommendedId + ". " + o.reason });
+    state.transcript.push({ kind: "vote", speaker: adv ? adv.short : step.advisorId, title: "Opening vote", headline: o.headline || "", body: o.stance + " on option " + o.recommendedId + ". " + o.reason });
     return { ok: true };
   }
   if (step.key.indexOf("debate:") === 0) {
@@ -1059,7 +1062,7 @@ BR.applyStepResult = function (state, step, parsed) {
     if (!round) { round = { round: step.round, cards: {} }; state.debateRounds[step.round - 1] = round; }
     round.cards[step.advisorId] = db;
     var adv2 = BR.advisorById(state, step.advisorId);
-    state.transcript.push({ kind: "argument", speaker: adv2 ? adv2.short : step.advisorId, title: "Debate round " + step.round, body: db.rebuttal || db.reason, disagreeWith: db.disagreeWith || "", concede: db.concede || "" });
+    state.transcript.push({ kind: "argument", speaker: adv2 ? adv2.short : step.advisorId, title: "Debate round " + step.round, headline: db.headline || "", body: db.rebuttal || db.reason, disagreeWith: db.disagreeWith || "", concede: db.concede || "" });
     return { ok: true };
   }
   if (step.key.indexOf("discussion:") === 0) {
@@ -1073,7 +1076,7 @@ BR.applyStepResult = function (state, step, parsed) {
     if (!state.discussion) { state.discussion = {}; }
     state.discussion[step.advisorId] = dc;
     var advD = BR.advisorById(state, step.advisorId);
-    state.transcript.push({ kind: "discussion", speaker: advD ? advD.short : step.advisorId, title: "Discussion", body: dc.reply, answerTo: dc.answerTo, targetId: resolvedTarget ? resolvedTarget.id : "", agree: dc.agree, pointAnswered: dc.pointAnswered, steelman: dc.steelman, weakPoint: dc.weakPoint, concede: dc.concede, costOfBeingWrong: dc.costOfBeingWrong, evidenceDemanded: dc.evidenceDemanded });
+    state.transcript.push({ kind: "discussion", speaker: advD ? advD.short : step.advisorId, title: "Discussion", headline: dc.headline || "", body: dc.reply, answerTo: dc.answerTo, targetId: resolvedTarget ? resolvedTarget.id : "", agree: dc.agree, pointAnswered: dc.pointAnswered, steelman: dc.steelman, weakPoint: dc.weakPoint, concede: dc.concede, costOfBeingWrong: dc.costOfBeingWrong, evidenceDemanded: dc.evidenceDemanded });
     return { ok: true };
   }
   if (step.key === "draft") {
